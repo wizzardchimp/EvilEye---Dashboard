@@ -599,7 +599,14 @@ def api_breaches_regions():
                       "forces": [{"force": f, "name": breaches.FORCE_NAMES.get(f, f.replace("-", " ").title()), "count": k}
                                  for f, k in forces.most_common()]})
     rocus.sort(key=lambda x: -x["count"])
-    return jsonify(total=total, placed=placed, unplaced=total - placed,
+    # lookup progress across ALL organisations (ignores the current filters)
+    all_keys = {c["key"] for c in CASES if c["key"]}
+    done_status = ("placed", "no-match", "no-force", "no-postcode")
+    looked = sum(1 for k in all_keys if (GEO.get(k) or {}).get("status") in done_status)
+    placed_orgs = sum(1 for k in all_keys if (GEO.get(k) or {}).get("status") == "placed")
+    lookups = {"orgs_total": len(all_keys), "orgs_looked_up": looked, "orgs_placed": placed_orgs,
+               "orgs_remaining": len(all_keys) - looked, "progress": _share(looked, len(all_keys))}
+    return jsonify(total=total, placed=placed, unplaced=total - placed, lookups=lookups,
                    coverage=_share(placed, total), looked_up=tried, enabled=breaches.CH_ENABLED,
                    placing=_geo_running, rocus=rocus,
                    note="Placed by matching the organisation name to a Companies House registered office. "

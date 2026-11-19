@@ -417,9 +417,13 @@ async function loadBreaches(quiet) {
     const regionRows = shown.map((x) => [x.rocu, x.count, x.share]);
     if (r.unplaced) regionRows.push(["Unplaced", r.unplaced, +(100 - r.coverage).toFixed(1)]);
     drawBars($("#b-regions"), regionRows);
-    $("#b-cover").textContent = !r.enabled
+    const L = r.lookups;
+    $("#b-cover").innerHTML = !r.enabled
       ? "Regional placement is off: set COMPANIES_HOUSE_KEY."
-      : `${r.coverage}% placed (${r.placed} of ${r.total}).${r.placing ? " Placing organisations now; press Refresh to update." : ""} Click a region to see its forces.`;
+      : `<strong>${r.coverage}%</strong> of these cases placed (${r.placed} of ${r.total}). Click a region to see its forces.` +
+        `<div class="lookup"><div class="bar-track"><div class="bar-fill ico" style="width:${Math.max(1, L.progress)}%"></div></div>` +
+        `<span><strong>${L.orgs_looked_up.toLocaleString()}</strong> of ${L.orgs_total.toLocaleString()} organisations looked up (${L.progress}%) · ${L.orgs_placed.toLocaleString()} placed · ${L.orgs_remaining.toLocaleString()} to go` +
+        `${r.placing ? ' · <em>looking up now…</em>' : ""}</span></div>`;
     $("#b-regions").querySelectorAll(".bar-row").forEach((row, i) => {
       const name = regionRows[i][0];
       row.classList.add("pick");
