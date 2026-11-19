@@ -59,8 +59,6 @@ def _load_snapshot():
 
 
 _load_snapshot()
-for _v in STATE["victims"]:
-    _v["activity"] = _sector(_v.get("activity"))
 
 
 def _now_iso():
@@ -120,6 +118,10 @@ def _sector(a):
     """ransomware.live uses 'Not Found' (or nothing) when it has not classified a victim."""
     a = (a or "").strip()
     return "Unclassified" if a in ("", "Not Found", "Unknown") else a
+
+
+for _v in STATE["victims"]:   # normalise a snapshot saved by an older version
+    _v["activity"] = _sector(_v.get("activity"))
 
 
 def _year(item):
