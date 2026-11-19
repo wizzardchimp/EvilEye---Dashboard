@@ -320,7 +320,8 @@ async function loadGangs() {
           .map((g) => {
             const sites = (g.leak_sites || []).map((s, i) => {
               const ok = s.available === true || s.status === "ONLINE";
-              return `<div class="site-line"><span class="dot ${s.available === false || s.status === "OFFLINE" ? "bad" : ok ? "ok" : "na"}"></span>${s.slug ? `<a href="${esc(s.slug)}" target="_blank" rel="noopener">${esc(s.slug)}</a>` : esc(s.fqdn || "site")}</div>`;
+              const addr = s.slug || s.fqdn || "";
+              return `<div class="site-line"><span class="dot ${s.available === false || s.status === "OFFLINE" ? "bad" : ok ? "ok" : "na"}"></span>${addr ? `<button type="button" class="copy" data-copy="${esc(addr)}" title="Click to copy. Not opened from here."><span class="addr">${esc(addr)}</span><span class="cpy">copy</span></button>` : "site"}</div>`;
             });
             const meta = [
               g.added_date ? `tracked since ${esc(g.added_date)}` : "",
@@ -342,6 +343,37 @@ async function loadGangs() {
   }
 }
 
+// ------------------------------------------------------------------ click to copy
+function toast(msg) {
+  let t = $("#toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), 1800);
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall back below */ }
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button.copy[data-copy]");
+  if (!b) return;
+  const ok = await copyText(b.dataset.copy);
+  const label = b.querySelector(".cpy");
+  if (ok) {
+    b.classList.add("done"); if (label) label.textContent = "copied";
+    toast("Copied to clipboard");
+    setTimeout(() => { b.classList.remove("done"); if (label) label.textContent = "copy"; }, 1400);
+  } else {
+    toast("Copy failed: select the text manually");
+  }
+});
+
 // ------------------------------------------------------------------ breaches (ICO)
 let bForce = "";
 let bFilled = false;
@@ -355,9 +387,9 @@ function bParams(extra) {
   if (bForce) p.set("force", bForce);
   return p;
 }
-async function loadBreaches() {
+async function loadBreaches(quiet) {
   const rows = $("#b-rows");
-  rows.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>';
+  if (quiet !== true) rows.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>';
   try {
     const [s, r, c] = await Promise.all([
       api(`/api/breaches/summary?${bParams()}`),
@@ -561,6 +593,7 @@ document.getElementById("refresh-now").addEventListener("click", async () => {
   btn.disabled = false;
   btn.textContent = "Refresh";
   refreshCurrent();
+  trackPlacing();
 });
 
 // Refresh policy: the server fetches feeds only when the page is opened (if its data
@@ -574,6 +607,7 @@ async function onOpen() {
   } catch (e) { /* offline: show cached data */ }
   await loadHealth();
   refreshCurrent();
+  trackPlacing();
 }
 async function waitForRefresh() {
   // short-lived check, only while a refresh we asked for is running
@@ -582,6 +616,25 @@ async function waitForRefresh() {
     if (!$("#last-updated").textContent.includes("refreshing")) return;
     await new Promise((res) => setTimeout(res, 3000));
   }
+}
+
+// Placement of ICO organisations runs on the server after an open or Refresh. While that one
+// job is running we re-read the Regions panel every 20s, then stop. No polling otherwise.
+let tracking = false;
+async function trackPlacing() {
+  if (tracking) return;
+  tracking = true;
+  try {
+    await new Promise((res) => setTimeout(res, 2000));
+    for (let i = 0; i < 60; i++) {
+      let placing = false;
+      try { const h = await api("/health"); placing = !!h.placing; } catch (e) { break; }
+      await loadHealth();
+      if (document.querySelector(".tab.active")?.dataset.tab === "breaches") await loadBreaches(true);
+      if (!placing) break;
+      await new Promise((res) => setTimeout(res, 20000));
+    }
+  } finally { tracking = false; }
 }
 loadHealth();
 loadOverview();
