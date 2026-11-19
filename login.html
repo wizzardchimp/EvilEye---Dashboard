@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EvilEye · Sign in</title>
+  <link rel="icon" type="image/svg+xml" href="/static/angry-eye.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="login-brand">
+      <span class="logo"><img src="/static/angry-eye.svg" width="32" height="32" alt="EvilEye"></span>
+      <div>
+        <h1>EvilEye</h1>
+        <p class="tagline">the private eye on the patch</p>
+      </div>
+    </div>
+    <form method="post" action="/login" class="login-form">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <p id="login-error" class="login-error" hidden>Incorrect password. Try again.</p>
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+  </main>
+  <script>
+    if (new URLSearchParams(location.search).has("error")) {
+      document.getElementById("login-error").hidden = false;
+      document.getElementById("password").select();
+    }
+  </script>
+</body>
+</html>

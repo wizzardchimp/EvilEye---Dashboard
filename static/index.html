@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EvilEye</title>
+  <link rel="icon" type="image/svg+xml" href="/static/angry-eye.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="logo"><img src="/static/angry-eye.svg" width="32" height="32" alt="EvilEye"></span>
+        <div>
+          <h1>EvilEye</h1>
+          <p class="tagline">the private eye on the patch — ransomware.live · RansomLook · NCSC · CISA KEV</p>
+        </div>
+      </div>
+      <div class="status-row">
+        <div id="last-updated" class="updated">syncing&hellip;</div>
+        <button id="refresh-now" class="more" type="button">Refresh</button>
+        <a class="more" href="/logout">Log out</a>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="wmidlands">West Midlands</button>
+    <button class="tab" data-tab="victims">UK Victims</button>
+    <button class="tab" data-tab="posts">Attack Feed</button>
+    <button class="tab" data-tab="gangs">Gang Catalog</button>
+    <button class="tab" data-tab="alerts">Alerts</button>
+  </nav>
+
+  <main>
+    <section id="tab-overview" class="panel active">
+      <div id="stat-cards" class="stat-grid"></div>
+      <div class="chart-grid">
+        <div class="card" id="card-year">
+          <div class="card-head"><h3>UK victims by year</h3><button class="more" type="button" data-detail="year">More</button></div>
+          <div id="chart-year" class="bars"></div>
+        </div>
+        <div class="card" id="card-gang">
+          <div class="card-head"><h3>Top gangs</h3><button class="more" type="button" data-detail="gang">More</button></div>
+          <div id="chart-gangs" class="bars"></div>
+        </div>
+        <div class="card" id="card-sector">
+          <div class="card-head"><h3>Top sectors</h3><button class="more" type="button" data-detail="sector">More</button></div>
+          <div id="chart-sectors" class="bars"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-wmidlands" class="panel">
+      <div class="toolbar">
+        <p class="hint">A town name is not enough. The website must look British (.uk, a UK postcode, or England) and must not be a US or other overseas address. Burton-on-Trent and Pershore still count. A registered office is not every operating site.</p>
+      </div>
+      <div id="wm-list" class="victim-grid"></div>
+    </section>
+
+    <section id="tab-victims" class="panel">
+      <div class="toolbar">
+        <input id="vq" class="search" type="search" placeholder="Search victim, website, group&hellip;">
+        <select id="vgroup" class="search"><option value="">All groups</option></select>
+        <select id="vsector" class="search"><option value="">All sectors</option></select>
+        <button id="vrefresh" class="btn">Refresh</button>
+      </div>
+      <p id="vcount" class="count"></p>
+      <div id="victim-table-wrap" class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Victim</th><th>Group</th><th>Sector</th><th>Discovered</th><th>Region</th></tr></thead>
+          <tbody id="victim-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-posts" class="panel">
+      <div class="toolbar">
+        <input id="pq" class="search" type="search" placeholder="Filter posts across all sources&hellip;">
+        <button id="prefresh" class="btn">Refresh</button>
+      </div>
+      <p id="pcount" class="count"></p>
+      <div id="post-list" class="post-list"></div>
+    </section>
+
+    <section id="tab-gangs" class="panel">
+      <div class="toolbar">
+        <input id="gq" class="search" type="search" placeholder="Search gangs &amp; sources&hellip;">
+        <select id="gsource" class="search">
+          <option value="">All sources</option>
+          <option value="ransomware.live">ransomware.live</option>
+          <option value="deepdarkcti">deepdarkCTI</option>
+          <option value="ransomlook">RansomLook</option>
+        </select>
+        <select id="gsort" class="search" aria-label="Sort gangs">
+          <option value="name">Sort: A&ndash;Z</option>
+          <option value="active">Sort: Most active</option>
+        </select>
+        <div class="radio-group" role="radiogroup" aria-label="Filter by leak-site status">
+          <label><input type="radio" name="glive" value="" checked> All</label>
+          <label title="Only gangs with at least one green (online) leak site"><input type="radio" name="glive" value="1"> Live only</label>
+        </div>
+        <button id="grefresh" class="btn">Refresh</button>
+      </div>
+      <p id="gcount" class="count"></p>
+      <div id="gang-grid" class="gang-grid"></div>
+    </section>
+
+    <section id="tab-alerts" class="panel">
+      <div class="toolbar">
+        <input id="aq" class="search" type="search" placeholder="Search alerts, CVEs, posts&hellip;">
+        <select id="asource" class="search">
+          <option value="">All sources</option>
+          <option value="ncsc">NCSC</option>
+          <option value="cisa">CISA KEV</option>
+          <option value="ransomlook">RansomLook</option>
+          <option value="ransomware.live">Press</option>
+        </select>
+        <button id="arefresh" class="btn">Refresh</button>
+      </div>
+      <p id="acount" class="count"></p>
+      <div id="alert-list" class="post-list"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    Data: <a href="https://www.ransomware.live" target="_blank" rel="noopener">ransomware.live</a> ·
+    <a href="https://www.ransomlook.io" target="_blank" rel="noopener">RansomLook</a> ·
+    <a href="https://github.com/fastfire/deepdarkCTI" target="_blank" rel="noopener">deepdarkCTI</a> ·
+    NCSC · CISA KEV. Refreshes when you open the page or press Refresh.
+    For research purposes only.
+  </footer>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="card-head">
+        <h3 id="modal-title">Breakdown</h3>
+        <div class="modal-actions">
+          <button id="modal-back" class="more" type="button" hidden>Back</button>
+          <button id="modal-close" class="more" type="button">Close</button>
+        </div>
+      </div>
+      <p id="modal-explain" class="hint"></p>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+  <button id="awake" class="awake" type="button" aria-pressed="false" title="Keeps the screen on while this tab is visible. Does not unlock the computer.">
+    <span class="awake-knob" aria-hidden="true"></span>
+    <span class="awake-label">Keep screen on</span>
+  </button>
+  <script src="/static/app.js?v=11"></script>
+</body>
+</html>
