@@ -32,6 +32,7 @@
     <button class="tab" data-tab="posts">Attack Feed</button>
     <button class="tab" data-tab="gangs">Gang Catalog</button>
     <button class="tab" data-tab="alerts">Alerts</button>
+    <button class="tab" data-tab="breaches">Breaches</button>
   </nav>
 
   <main>
@@ -123,13 +124,40 @@
       <p id="acount" class="count"></p>
       <div id="alert-list" class="post-list"></div>
     </section>
+
+    <section id="tab-breaches" class="panel">
+      <div class="toolbar">
+        <div class="radio-group" role="radiogroup" aria-label="Breach scope">
+          <label><input type="radio" name="bcyber" value="1" checked> Cyber incidents</label>
+          <label><input type="radio" name="bcyber" value=""> All breaches</label>
+        </div>
+        <input id="bq" class="search" type="search" placeholder="Search organisation, sector&hellip;">
+        <select id="bsector" class="search"><option value="">All sectors</option></select>
+        <select id="brocu" class="search"><option value="">All regions (ROCU)</option></select>
+        <button id="brefresh" class="btn">Refresh</button>
+      </div>
+      <p id="bnote" class="hint"></p>
+      <div id="b-stats" class="stat-grid"></div>
+      <div class="chart-grid">
+        <div class="card"><div class="card-head"><h3>Cases by quarter</h3></div><div id="b-quarter" class="bars"></div></div>
+        <div class="card"><div class="card-head"><h3>Top sectors</h3></div><div id="b-sectors" class="bars"></div></div>
+        <div class="card"><div class="card-head"><h3>By ROCU region</h3></div><p id="b-cover" class="hint"></p><div id="b-regions" class="bars"></div></div>
+      </div>
+      <p id="bcount" class="count"></p>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Organisation</th><th>Sector</th><th>Cyber</th><th>Completed</th><th>Region</th></tr></thead>
+          <tbody id="b-rows"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <footer class="foot">
     Data: <a href="https://www.ransomware.live" target="_blank" rel="noopener">ransomware.live</a> ·
     <a href="https://www.ransomlook.io" target="_blank" rel="noopener">RansomLook</a> ·
     <a href="https://github.com/fastfire/deepdarkCTI" target="_blank" rel="noopener">deepdarkCTI</a> ·
-    NCSC · CISA KEV. Refreshes when you open the page or press Refresh.
+    NCSC · CISA KEV · ICO (Open Government Licence). Refreshes when you open the page or press Refresh.
     For research purposes only.
   </footer>
 
@@ -150,6 +178,6 @@
     <span class="awake-knob" aria-hidden="true"></span>
     <span class="awake-label">Keep screen on</span>
   </button>
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>

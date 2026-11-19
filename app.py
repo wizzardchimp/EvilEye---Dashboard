@@ -19,6 +19,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import requests
+import breaches
 from flask import Flask, jsonify, redirect, request, send_from_directory, session
 
 BASE = Path(__file__).parent
@@ -40,6 +41,14 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
 _lock = threading.Lock()
 STATE = {"victims": [], "posts": [], "gangs": [], "intel": [], "last_refresh": {}, "errors": {}}
 _refreshing = False
+_geo_running = False
+CASES = []                      # ICO cases (kept out of the main snapshot: it is large)
+GEO = breaches.load_geo(DATA_DIR)  # organisation key -> placement record (cache on disk)
+CASES_FILE = DATA_DIR / "ico_cases.json"
+try:
+    CASES = json.loads(CASES_FILE.read_text())
+except Exception:
+    pass
 
 
 def _load_snapshot():
@@ -244,6 +253,16 @@ def _ingest():
         intel.sort(key=lambda i: str(i.get("published") or ""), reverse=True)
         new["intel"] = intel
 
+    # ICO self-reported personal data breach cases (quarterly CSVs; each file is downloaded once)
+    try:
+        cases, _ = breaches.ingest(DATA_DIR)
+        if cases:
+            CASES[:] = cases
+            CASES_FILE.write_text(json.dumps(cases))
+        stamps["ico"] = _now_iso()
+    except Exception as e:
+        errors["ico"] = str(e)
+
     # optional enrichment: Companies House for West Midlands matches
     if CH_KEY:
         try:
@@ -269,6 +288,21 @@ def _ingest():
         except Exception as e:
             STATE["errors"]["snapshot"] = str(e)
     _refreshing = False
+    _geo()
+
+
+def _geo():
+    """Bounded placement of ICO organisations (resumes where the last refresh stopped)."""
+    global _geo_running
+    if _geo_running or not breaches.CH_ENABLED or not CASES:
+        return
+    _geo_running = True
+    try:
+        breaches.geo_pass(CASES, GEO, DATA_DIR)
+    except Exception as e:
+        STATE["errors"]["geo"] = str(e)
+    finally:
+        _geo_running = False
 
 
 def start_refresh():
@@ -342,7 +376,7 @@ def index():
 @app.get("/health")
 def health():
     return jsonify(errors=STATE.get("errors") or None, last_refresh=STATE.get("last_refresh", {}),
-                   refreshing=_refreshing)
+                   refreshing=_refreshing, placing=_geo_running)
 
 
 @app.post("/api/open")
@@ -436,7 +470,9 @@ def api_victims():
         items = [v for v in items if q in (v["post_title"] + " " + v["website"] + " " + v["group"]).lower()]
     items = sorted(items, key=lambda v: str(v.get("discovered") or ""), reverse=True)
     off, lim = _int("offset", 0, 10**6), _int("limit", 200)
-    return jsonify(total=len(items), items=items[off:off + lim])
+    ico = {c["key"] for c in CASES if c["key"]}
+    page = [dict(v, ico=breaches.norm(v["post_title"]) in ico) for v in items[off:off + lim]]
+    return jsonify(total=len(items), items=page)
 
 
 @app.get("/api/posts")
@@ -472,6 +508,106 @@ def api_intel():
     if q:
         items = [i for i in items if q in json.dumps(i).lower()]
     return jsonify(total=len(items), items=items[:_int("limit", 120)], keys={"companies_house": bool(CH_KEY)})
+
+
+# ----------------------------------------------------------------- ICO breaches
+def _cases():
+    """Filtered ICO cases from query args: cyber=1, q, sector, rocu, force, quarter."""
+    out = CASES
+    if request.args.get("cyber") == "1":
+        out = [c for c in out if c["cyber"]]
+    for arg, key in (("sector", "sector"), ("quarter", "quarter")):
+        if request.args.get(arg):
+            out = [c for c in out if c[key] == request.args[arg]]
+    q = request.args.get("q", "").lower()
+    if q:
+        out = [c for c in out if q in (c["org"] + " " + c["sector"] + " " + c["subsector"]).lower()]
+    rocu, force = request.args.get("rocu"), request.args.get("force")
+    if rocu or force:
+        def hit(c):
+            g = GEO.get(c["key"]) or {}
+            if g.get("status") != "placed":
+                return rocu == "Unplaced" and not force
+            return (not rocu or g.get("rocu") == rocu) and (not force or g.get("force") == force)
+        out = [c for c in out if hit(c)]
+    return out
+
+
+def _geo_of(c):
+    g = GEO.get(c["key"]) or {}
+    return g if g.get("status") == "placed" else {}
+
+
+@app.get("/api/breaches/summary")
+def api_breaches_summary():
+    out = _cases()
+    total = len(out)
+    quarters = Counter(c["quarter"] for c in out)
+    cyber_n = sum(1 for c in out if c["cyber"])
+    rw = {breaches.norm(v["post_title"]) for v in STATE["victims"]}
+    return jsonify(
+        total=total, cyber=cyber_n, cyber_share=_share(cyber_n, total),
+        orgs=len({c["key"] for c in out if c["key"]}),
+        also_ransomware=len({c["key"] for c in out if c["key"] in rw}),
+        by_quarter=[{"quarter": q, "count": n} for q, n in sorted(quarters.items())],
+        top_sectors=[{"sector": s, "count": n} for s, n in Counter(c["sector"] for c in out).most_common(10)],
+        decisions=[{"decision": d or "Unknown", "count": n} for d, n in Counter(c["decision"] for c in out).most_common(6)],
+        cyber_flags=[{"flag": f, "count": n} for f, n in Counter(c["cyber_flag"] for c in _all_for_flags()).most_common()],
+        source_note="Self-reported cases the ICO dealt with and did not refer for investigation.")
+
+
+def _all_for_flags():
+    # flag breakdown ignores the cyber toggle so the split is always visible
+    saved = request.args
+    out = CASES
+    q = saved.get("q", "").lower()
+    if saved.get("sector"):
+        out = [c for c in out if c["sector"] == saved["sector"]]
+    if q:
+        out = [c for c in out if q in (c["org"] + " " + c["sector"]).lower()]
+    return out
+
+
+@app.get("/api/breaches/regions")
+def api_breaches_regions():
+    out = _cases()
+    total = len(out)
+    by_rocu = defaultdict(lambda: Counter())
+    placed = 0
+    for c in out:
+        g = _geo_of(c)
+        if g:
+            placed += 1
+            by_rocu[g["rocu"]][g["force"]] += 1
+    tried = sum(1 for c in out if (GEO.get(c["key"]) or {}).get("status"))
+    rocus = []
+    for r in list(breaches.ROCU_FORCES) + ["Scotland", "Northern Ireland"]:
+        forces = by_rocu.get(r, Counter())
+        n = sum(forces.values())
+        rocus.append({"rocu": r, "count": n, "share": _share(n, total),
+                      "forces": [{"force": f, "name": breaches.FORCE_NAMES.get(f, f.replace("-", " ").title()), "count": k}
+                                 for f, k in forces.most_common()]})
+    rocus.sort(key=lambda x: -x["count"])
+    return jsonify(total=total, placed=placed, unplaced=total - placed,
+                   coverage=_share(placed, total), looked_up=tried, enabled=breaches.CH_ENABLED,
+                   placing=_geo_running, rocus=rocus,
+                   note="Placed by matching the organisation name to a Companies House registered office. "
+                        "Organisations that cannot be matched (many GP surgeries, schools, charities) stay unplaced.")
+
+
+@app.get("/api/breaches/cases")
+def api_breaches_cases():
+    out = sorted(_cases(), key=lambda c: c["completed"] or "", reverse=True)
+    rw = {breaches.norm(v["post_title"]): v["group"] for v in STATE["victims"]}
+    off, lim = _int("offset", 0, 10**6), _int("limit", 100)
+    items = []
+    for c in out[off:off + lim]:
+        g = _geo_of(c)
+        items.append(dict(c, rocu=g.get("rocu"), force=g.get("force"),
+                          force_name=breaches.FORCE_NAMES.get(g.get("force"), "") if g else "",
+                          postcode=g.get("postcode"), ransomware_group=rw.get(c["key"])))
+    return jsonify(total=len(out), items=items, sectors=sorted({c["sector"] for c in CASES}),
+                   rocus=list(breaches.ROCU_FORCES) + ["Scotland", "Northern Ireland", "Unplaced"])
 
 
 if __name__ == "__main__":

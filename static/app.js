@@ -27,6 +27,7 @@ function refreshCurrent() {
   else if (active === "posts") loadPosts();
   else if (active === "gangs") loadGangs();
   else if (active === "alerts") loadAlerts();
+  else if (active === "breaches") loadBreaches();
 }
 
 async function api(path) {
@@ -51,7 +52,7 @@ async function loadHealth() {
       const ago = mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)}h ago`;
       el.innerHTML = h.refreshing
         ? `<span class="ok">refreshing…</span>`
-        : `<span class="ok">synced ${ago}</span>`;
+        : `<span class="ok">synced ${ago}${h.placing ? " · placing organisations" : ""}</span>`;
     } else if (errs) {
       el.innerHTML = `<span class="err">ingest error on first sync; retrying…</span>`;
     } else {
@@ -230,7 +231,7 @@ async function loadVictims() {
             (v) => `
         <tr>
           <td>
-            <strong>${esc(v.post_title)}</strong>
+            <strong>${esc(v.post_title)}</strong>${v.ico ? ' <span class="badge src" title="Also appears in ICO breach cases">ICO</span>' : ""}
             ${v.website ? `<div class="meta"><a href="https://${esc(v.website)}" target="_blank" rel="noopener">${esc(v.website)}</a></div>` : ""}
           </td>
           <td><span class="badge grp">${esc(v.group)}</span></td>
@@ -340,6 +341,99 @@ async function loadGangs() {
     grid.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
   }
 }
+
+// ------------------------------------------------------------------ breaches (ICO)
+let bForce = "";
+let bFilled = false;
+function bParams(extra) {
+  const p = new URLSearchParams(extra || {});
+  if (document.querySelector('input[name="bcyber"]:checked')?.value === "1") p.set("cyber", "1");
+  const q = $("#bq").value.trim(), sec = $("#bsector").value, rocu = $("#brocu").value;
+  if (q) p.set("q", q);
+  if (sec) p.set("sector", sec);
+  if (rocu) p.set("rocu", rocu);
+  if (bForce) p.set("force", bForce);
+  return p;
+}
+async function loadBreaches() {
+  const rows = $("#b-rows");
+  rows.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>';
+  try {
+    const [s, r, c] = await Promise.all([
+      api(`/api/breaches/summary?${bParams()}`),
+      api(`/api/breaches/regions?${bParams()}`),
+      api(`/api/breaches/cases?${bParams({ limit: "100" })}`),
+    ]);
+    if (!bFilled && c.sectors.length) {
+      $("#bsector").innerHTML = `<option value="">All sectors</option>` + c.sectors.map((x) => `<option>${esc(x)}</option>`).join("");
+      $("#brocu").innerHTML = `<option value="">All regions (ROCU)</option>` + c.rocus.map((x) => `<option>${esc(x)}</option>`).join("");
+      bFilled = true;
+    }
+    const cyberOnly = document.querySelector('input[name="bcyber"]:checked')?.value === "1";
+    $("#bnote").textContent = `${s.source_note} "Cyber incident" is the organisation's own answer, not an ICO finding.` + (bForce ? ` Filtered to ${bForce}.` : "");
+    $("#b-stats").innerHTML = [
+      [cyberOnly ? "Cyber incidents" : "Breach cases", s.total, ""],
+      [cyberOnly ? "of all cases" : "Flagged cyber", cyberOnly ? "" : `${s.cyber} (${s.cyber_share}%)`, ""],
+      ["Organisations", s.orgs, ""],
+      ["Also a ransomware victim", s.also_ransomware, "hl"],
+    ].filter((x) => x[1] !== "").map(([l, n, cls]) => `<div class="stat ${cls}"><div class="num">${n}</div><div class="label">${l}</div></div>`).join("");
+    drawBars($("#b-quarter"), s.by_quarter.map((x) => [x.quarter, x.count]));
+    drawBars($("#b-sectors"), s.top_sectors.map((x) => [x.sector, x.count]));
+    // regions: ROCU > police force > organisations
+    const shown = r.rocus.filter((x) => x.count > 0);
+    const regionRows = shown.map((x) => [x.rocu, x.count, x.share]);
+    if (r.unplaced) regionRows.push(["Unplaced", r.unplaced, +(100 - r.coverage).toFixed(1)]);
+    drawBars($("#b-regions"), regionRows);
+    $("#b-cover").textContent = !r.enabled
+      ? "Regional placement is off: set COMPANIES_HOUSE_KEY."
+      : `${r.coverage}% placed (${r.placed} of ${r.total}).${r.placing ? " Placing organisations now; press Refresh to update." : ""} Click a region to see its forces.`;
+    $("#b-regions").querySelectorAll(".bar-row").forEach((row, i) => {
+      const name = regionRows[i][0];
+      row.classList.add("pick");
+      row.addEventListener("click", () => (name === "Unplaced" ? setRegion("Unplaced", "") : showRocu(name, shown.find((x) => x.rocu === name))));
+    });
+    $("#bcount").textContent = `${c.total} cases (showing first ${c.items.length}). Source: ICO personal data breach cases, Open Government Licence v3.0.`;
+    rows.innerHTML = c.items.length
+      ? c.items.map((x) => `
+        <tr>
+          <td><strong>${esc(x.org || "—")}</strong>${x.ransomware_group ? ` <span class="badge wm" title="Also listed as a ransomware victim">ransomware: ${esc(x.ransomware_group)}</span>` : ""}
+            <div class="meta">${esc(x.ref)}${x.subsector ? " · " + esc(x.subsector) : ""}</div></td>
+          <td>${esc(x.sector)}</td>
+          <td>${x.cyber ? '<span class="badge wm">cyber</span>' : `<span class="badge uk">${esc(x.cyber_flag)}</span>`}</td>
+          <td>${esc(x.completed || "—")}</td>
+          <td>${x.rocu ? `${esc(x.rocu)}<div class="meta">${esc(x.force_name)}</div>` : '<span class="meta">unplaced</span>'}</td>
+        </tr>`).join("")
+      : '<tr><td colspan="5" class="ldr">no cases — still syncing, or no matches</td></tr>';
+  } catch (e) {
+    rows.innerHTML = `<tr><td colspan="5" class="ldr">failed to load: ${esc(e.message)}</td></tr>`;
+  }
+}
+function setRegion(rocu, force) {
+  bForce = force || "";
+  $("#brocu").value = rocu;
+  closeModal();
+  loadBreaches();
+}
+function showRocu(rocu, data) {
+  openModal();
+  $("#modal-back").hidden = true;
+  $("#modal-title").textContent = `${rocu} ROCU`;
+  $("#modal-explain").textContent = "Police forces in this region. Select a force to filter the case list.";
+  const body = $("#modal-body");
+  body.innerHTML = '<div class="bars"></div><p class="hint"><button class="more" type="button" id="rocu-all">Show whole region</button></p>';
+  const forces = (data && data.forces) || [];
+  drawBars(body.querySelector(".bars"), forces.map((f) => [f.name, f.count]));
+  body.querySelectorAll(".bar-row").forEach((row, i) => {
+    row.classList.add("pick");
+    row.addEventListener("click", () => setRegion(rocu, forces[i].force));
+  });
+  $("#rocu-all").addEventListener("click", () => setRegion(rocu, ""));
+}
+["bq"].forEach((id) => $(`#${id}`).addEventListener("input", debounce(loadBreaches, 300)));
+$("#bsector").addEventListener("change", loadBreaches);
+$("#brocu").addEventListener("change", () => { bForce = ""; loadBreaches(); });
+document.querySelectorAll('input[name="bcyber"]').forEach((el) => el.addEventListener("change", loadBreaches));
+$("#brefresh").addEventListener("click", loadBreaches);
 
 // ------------------------------------------------------------------ wiring
 ["vq", "vgroup", "vsector"].forEach((id) => {
