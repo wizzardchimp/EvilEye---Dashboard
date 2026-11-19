@@ -103,7 +103,9 @@ function drawBars(holder, rows) {
 const modal = document.getElementById("modal");
 let modalKind = "sector";
 
+let modalBackFn = null;   // set by the Breaches sector drill-down; null means the default Back action
 function openModal() {
+  modalBackFn = null;
   modal.hidden = false;
 }
 
@@ -175,7 +177,7 @@ document.getElementById("tab-overview").addEventListener("click", async (e) => {
 });
 
 document.getElementById("modal-close").addEventListener("click", closeModal);
-document.getElementById("modal-back").addEventListener("click", () => showBreakdown(modalKind));
+document.getElementById("modal-back").addEventListener("click", () => (modalBackFn ? modalBackFn() : showBreakdown(modalKind)));
 modal.addEventListener("click", (e) => {
   if (e.target === modal) closeModal();
 });
@@ -223,8 +225,7 @@ async function loadVictims() {
   try {
     const d = await api(`/api/victims?${params}`);
     $("#vcount").textContent = `${d.total} UK victims (showing first 200)`;
-    fillGroupSelect(d.items);
-    fillSectorSelect(d.items);
+    fillFacets(d.facets);
     tbody.innerHTML = d.items.length
       ? d.items
           .map(
@@ -247,18 +248,13 @@ async function loadVictims() {
   }
 }
 
-let groupSel = new Set(), sectorSel = new Set();
-function fillGroupSelect(items) {
-  items.forEach((i) => i.group && groupSel.add(i.group));
-  if ($("#vgroup").options.length <= 1) {
-    $("#vgroup").innerHTML = `<option value="">All groups</option>` + [...groupSel].sort().map((g) => `<option>${esc(g)}</option>`).join("");
-  }
-}
-function fillSectorSelect(items) {
-  items.forEach((i) => i.activity && i.activity !== "Not Found" && sectorSel.add(i.activity));
-  if ($("#vsector").options.length <= 1) {
-    $("#vsector").innerHTML = `<option value="">All sectors</option>` + [...sectorSel].sort().map((s) => `<option>${esc(s)}</option>`).join("");
-  }
+let facetsFilled = false;
+function fillFacets(f) {
+  // the lists come from the full UK dataset, not just the page of 200 rows on screen
+  if (facetsFilled || !f) return;
+  $("#vgroup").innerHTML = `<option value="">All groups</option>` + f.groups.map((g) => `<option>${esc(g)}</option>`).join("");
+  $("#vsector").innerHTML = `<option value="">All sectors</option>` + f.sectors.map((s) => `<option>${esc(s)}</option>`).join("");
+  facetsFilled = true;
 }
 
 // ------------------------------------------------------------------ posts
@@ -376,6 +372,7 @@ document.addEventListener("click", async (e) => {
 
 // ------------------------------------------------------------------ breaches (ICO)
 let bForce = "";
+let bSub = "";
 let bFilled = false;
 function bParams(extra) {
   const p = new URLSearchParams(extra || {});
@@ -385,16 +382,18 @@ function bParams(extra) {
   if (sec) p.set("sector", sec);
   if (rocu) p.set("rocu", rocu);
   if (bForce) p.set("force", bForce);
+  if (bSub) p.set("subsector", bSub);
   return p;
 }
 async function loadBreaches(quiet) {
   const rows = $("#b-rows");
   if (quiet !== true) rows.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>';
   try {
-    const [s, r, c] = await Promise.all([
+    const [s, r, c, cmp] = await Promise.all([
       api(`/api/breaches/summary?${bParams()}`),
       api(`/api/breaches/regions?${bParams()}`),
       api(`/api/breaches/cases?${bParams({ limit: "100" })}`),
+      api(`/api/compare/sectors?${bParams()}`),
     ]);
     if (!bFilled && c.sectors.length) {
       $("#bsector").innerHTML = `<option value="">All sectors</option>` + c.sectors.map((x) => `<option>${esc(x)}</option>`).join("");
@@ -402,7 +401,9 @@ async function loadBreaches(quiet) {
       bFilled = true;
     }
     const cyberOnly = document.querySelector('input[name="bcyber"]:checked')?.value === "1";
-    $("#bnote").textContent = `${s.source_note} "Cyber incident" is the organisation's own answer, not an ICO finding.` + (bForce ? ` Filtered to ${bForce}.` : "");
+    $("#bnote").textContent = `${s.source_note} "Cyber incident" is the organisation's own answer, not an ICO finding.` + (bForce ? ` Force: ${bForce}.` : "") + (bSub ? ` Sub-sector: ${bSub}.` : "");
+    $("#bclear").hidden = !(bForce || bSub || $("#bsector").value || $("#brocu").value);
+    drawCompare(cmp);
     $("#b-stats").innerHTML = [
       [cyberOnly ? "Cyber incidents" : "Breach cases", s.total, ""],
       [cyberOnly ? "of all cases" : "Flagged cyber", cyberOnly ? "" : `${s.cyber} (${s.cyber_share}%)`, ""],
@@ -440,6 +441,61 @@ async function loadBreaches(quiet) {
     rows.innerHTML = `<tr><td colspan="5" class="ldr">failed to load: ${esc(e.message)}</td></tr>`;
   }
 }
+function drawCompare(c) {
+  $("#b-cmp-note").textContent = `${c.note} ICO: ${c.ico_total} cases. Ransomware: ${c.rw_total} UK victims. Bars show each source's share of its own total.`;
+  const max = Math.max(1, ...c.rows.map((r) => Math.max(r.ico_share, r.rw_share)));
+  $("#b-compare").innerHTML = c.rows.map((r) => `
+    <div class="cmp-row">
+      <div class="bk" title="${esc(r.sector)}">${esc(r.sector)}</div>
+      <div class="cmp-bars">
+        <div class="cmp-line"><div class="bar-track"><div class="bar-fill ico" style="width:${Math.max(1, (r.ico_share / max) * 100)}%"></div></div><span class="bv">${r.ico_share}%</span></div>
+        <div class="cmp-line"><div class="bar-track"><div class="bar-fill rw" style="width:${Math.max(1, (r.rw_share / max) * 100)}%"></div></div><span class="bv">${r.rw_share}%</span></div>
+      </div>
+    </div>`).join("");
+}
+async function showBSectors() {
+  openModal();
+  $("#modal-back").hidden = true;
+  $("#modal-title").textContent = "Breaches by sector";
+  $("#modal-explain").textContent = "Select a sector for its sub-sector breakdown.";
+  const body = $("#modal-body");
+  body.innerHTML = '<div class="ldr">loading…</div>';
+  try {
+    const d = await api(`/api/breaches/sectors?${bParams()}`);
+    body.innerHTML = '<div class="bars"></div>';
+    drawBars(body.querySelector(".bars"), d.items.map((r) => [r.label, r.count, r.share]));
+    body.querySelectorAll(".bar-row").forEach((row, i) => {
+      row.classList.add("pick");
+      row.addEventListener("click", () => showBSub(d.items[i].label));
+    });
+  } catch (e) { body.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
+}
+async function showBSub(sector) {
+  openModal();
+  const back = $("#modal-back");
+  back.hidden = false;
+  modalBackFn = showBSectors;
+  $("#modal-title").textContent = sector;
+  $("#modal-explain").textContent = "Sub-sectors. Select one to filter the case list, or filter by the whole sector.";
+  const body = $("#modal-body");
+  body.innerHTML = '<div class="ldr">loading…</div>';
+  try {
+    const d = await api(`/api/breaches/sectors?${bParams({ sector })}`);
+    body.innerHTML = `<p class="hint">${d.total} cases, ${d.share}% of the current selection. <button class="more" type="button" id="sec-all">Filter to whole sector</button></p><div class="bars"></div>`;
+    drawBars(body.querySelector(".bars"), d.items.map((r) => [r.label, r.count, r.share]));
+    body.querySelectorAll(".bar-row").forEach((row, i) => {
+      row.classList.add("pick");
+      row.addEventListener("click", () => setSector(sector, d.items[i].label === "Not stated" ? "" : d.items[i].label));
+    });
+    $("#sec-all").addEventListener("click", () => setSector(sector, ""));
+  } catch (e) { body.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
+}
+function setSector(sector, sub) {
+  $("#bsector").value = sector;
+  bSub = sub || "";
+  closeModal();
+  loadBreaches();
+}
 function setRegion(rocu, force) {
   bForce = force || "";
   $("#brocu").value = rocu;
@@ -462,7 +518,9 @@ function showRocu(rocu, data) {
   $("#rocu-all").addEventListener("click", () => setRegion(rocu, ""));
 }
 ["bq"].forEach((id) => $(`#${id}`).addEventListener("input", debounce(loadBreaches, 300)));
-$("#bsector").addEventListener("change", loadBreaches);
+$("#bsector").addEventListener("change", () => { bSub = ""; loadBreaches(); });
+$("#b-sectors-more").addEventListener("click", showBSectors);
+$("#bclear").addEventListener("click", () => { bForce = ""; bSub = ""; $("#bsector").value = ""; $("#brocu").value = ""; loadBreaches(); });
 $("#brocu").addEventListener("change", () => { bForce = ""; loadBreaches(); });
 document.querySelectorAll('input[name="bcyber"]').forEach((el) => el.addEventListener("change", loadBreaches));
 $("#brefresh").addEventListener("click", loadBreaches);

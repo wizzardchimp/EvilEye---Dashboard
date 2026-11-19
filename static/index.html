@@ -135,13 +135,20 @@
         <select id="bsector" class="search"><option value="">All sectors</option></select>
         <select id="brocu" class="search"><option value="">All regions (ROCU)</option></select>
         <button id="brefresh" class="btn">Refresh</button>
+        <button id="bclear" class="more" type="button" hidden>Clear sector / region filter</button>
       </div>
       <p id="bnote" class="hint"></p>
       <div id="b-stats" class="stat-grid"></div>
       <div class="chart-grid">
         <div class="card"><div class="card-head"><h3>Cases by quarter</h3></div><div id="b-quarter" class="bars"></div></div>
-        <div class="card"><div class="card-head"><h3>Top sectors</h3></div><div id="b-sectors" class="bars"></div></div>
+        <div class="card"><div class="card-head"><h3>Top sectors</h3><button class="more" type="button" id="b-sectors-more">More</button></div><div id="b-sectors" class="bars"></div></div>
         <div class="card"><div class="card-head"><h3>By ROCU region</h3></div><p id="b-cover" class="hint"></p><div id="b-regions" class="bars"></div></div>
+      </div>
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-head"><h3>Sector comparison: ICO breaches vs ransomware victims</h3></div>
+        <p id="b-cmp-note" class="hint"></p>
+        <div class="cmp-legend"><span><i class="sw ico"></i>ICO cases</span><span><i class="sw rw"></i>Ransomware victims (UK)</span></div>
+        <div id="b-compare" class="cmp"></div>
       </div>
       <p id="bcount" class="count"></p>
       <div class="table-wrap">
@@ -178,6 +185,6 @@
     <span class="awake-knob" aria-hidden="true"></span>
     <span class="awake-label">Keep screen on</span>
   </button>
-  <script src="/static/app.js?v=13"></script>
+  <script src="/static/app.js?v=14"></script>
 </body>
 </html>

@@ -117,6 +117,20 @@ main { max-width: 1240px; margin: 0 auto; padding: 0 20px 48px; }
 .bar-row.pick:hover { background: var(--surface-2); }
 .bar-row.pick:hover .bk { color: var(--text); }
 
+.bar-fill.ico { background: linear-gradient(90deg, #3d6fb5, var(--link)); }
+.bar-fill.rw { background: linear-gradient(90deg, #b01f43, var(--accent)); }
+.cmp { display: flex; flex-direction: column; gap: 12px; }
+.cmp-row { display: flex; align-items: center; gap: 12px; font-size: 12.5px; }
+.cmp-row .bk { color: var(--text-2); width: 230px; flex-shrink: 0; }
+.cmp-bars { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.cmp-line { display: flex; align-items: center; gap: 10px; }
+.cmp-line .bar-track { height: 7px; }
+.cmp-line .bv { width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.cmp-legend { display: flex; gap: 18px; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
+.cmp-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.sw.ico { background: var(--link); } .sw.rw { background: var(--accent); }
+@media (max-width: 640px) { .cmp-row { flex-direction: column; align-items: stretch; gap: 4px; } .cmp-row .bk { width: auto; } }
+
 /* ---------- controls ---------- */
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
 .search {

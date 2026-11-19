@@ -176,3 +176,56 @@ def geo_pass(cases, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False):
         time.sleep(0.55)   # stay under Companies House's 600 requests / 5 minutes
     save_geo(data_dir, geo)
     return done
+
+
+# ----------------------------------------------------------------- common sector crosswalk
+# ransomware.live ("activity") and the ICO ("Sector") use different category lists. To compare them,
+# both are mapped to one approximate common set. The mapping is a judgement call; see README.
+RL_TO_COMMON = {
+    "Professional Services": "Legal and professional services",
+    "Manufacturing": "Retail, manufacturing and trade",
+    "Retail & E-Commerce": "Retail, manufacturing and trade",
+    "Technology": "Technology and telecoms",
+    "Financial Services": "Finance and insurance",
+    "Education": "Education",
+    "Healthcare": "Health and social care",
+    "Transportation": "Transport, travel and hospitality",
+    "Hospitality": "Transport, travel and hospitality",
+    "Agriculture and Food Production": "Agriculture and food",
+    "Energy & Utilities": "Energy and utilities",
+    "Government & Defense": "Government and public sector",
+    "Other": "Other",
+    "Unclassified": "Unclassified",
+}
+ICO_TO_COMMON = {
+    "Health": "Health and social care",
+    "Social care": "Health and social care",
+    "Education and childcare": "Education",
+    "Retail and manufacture": "Retail, manufacturing and trade",
+    "Local government": "Government and public sector",
+    "Central Government": "Government and public sector",
+    "Justice": "Government and public sector",
+    "Regulators": "Government and public sector",
+    "Political": "Government and public sector",
+    "Finance, insurance and credit": "Finance and insurance",
+    "Charitable and voluntary": "Charity, religious and membership",
+    "Membership association": "Charity, religious and membership",
+    "Religious": "Charity, religious and membership",
+    "Legal": "Legal and professional services",
+    "Transport and leisure": "Transport, travel and hospitality",
+    "Land or property services": "Property and construction",
+    "Online Technology and Telecoms": "Technology and telecoms",
+    "Utilities": "Energy and utilities",
+    "Marketing": "Media and marketing",
+    "Media": "Media and marketing",
+    "General business": "Other",
+    "Unknown": "Unclassified",
+}
+
+
+def common_rl(activity):
+    return RL_TO_COMMON.get(activity or "Unclassified", "Other")
+
+
+def common_ico(sector):
+    return ICO_TO_COMMON.get(sector or "Unknown", "Other")

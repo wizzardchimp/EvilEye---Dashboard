@@ -32,3 +32,28 @@ Toggle **Cyber incidents** (the organisation's own `ISCyberIncident = Yes` answe
 Regions follow ROCU > police force > organisations. The ICO publishes no locations, so organisations are
 placed by Companies House registered office -> postcodes.io -> data.police.uk. Unmatched organisations
 (many GP surgeries, schools, charities) show as **Unplaced**; the coverage percentage is shown on the tab.
+
+## Sectors
+- **Ransomware victims:** the sector is ransomware.live's own `activity` category (14 values). Victims it has not
+  classified ("Not Found") show as **Unclassified** and are counted, so shares add up to 100%.
+- **ICO cases:** the ICO's `Sector` (22 values) and `SubSector` (about 138). The Breaches tab drills sector > sub-sector.
+- **Comparison card:** the two lists differ, so both are mapped to one approximate common set (below). It is a
+  judgement call; edit `RL_TO_COMMON` / `ICO_TO_COMMON` in `breaches.py` to change it.
+
+| Common sector | ransomware.live | ICO |
+|---|---|---|
+| Agriculture and food | Agriculture and Food Production | - |
+| Charity, religious and membership | - | Charitable and voluntary, Membership association, Religious |
+| Education | Education | Education and childcare |
+| Energy and utilities | Energy & Utilities | Utilities |
+| Finance and insurance | Financial Services | Finance, insurance and credit |
+| Government and public sector | Government & Defense | Local government, Central Government, Justice, Regulators, Political |
+| Health and social care | Healthcare | Health, Social care |
+| Legal and professional services | Professional Services | Legal |
+| Media and marketing | - | Marketing, Media |
+| Other | Other | General business |
+| Property and construction | - | Land or property services |
+| Retail, manufacturing and trade | Manufacturing, Retail & E-Commerce | Retail and manufacture |
+| Technology and telecoms | Technology | Online Technology and Telecoms |
+| Transport, travel and hospitality | Transportation, Hospitality | Transport and leisure |
+| Unclassified | Unclassified | Unknown |

@@ -59,6 +59,8 @@ def _load_snapshot():
 
 
 _load_snapshot()
+for _v in STATE["victims"]:
+    _v["activity"] = _sector(_v.get("activity"))
 
 
 def _now_iso():
@@ -114,6 +116,12 @@ def _sentence_with(text, hit):
     return ""
 
 
+def _sector(a):
+    """ransomware.live uses 'Not Found' (or nothing) when it has not classified a victim."""
+    a = (a or "").strip()
+    return "Unclassified" if a in ("", "Not Found", "Unknown") else a
+
+
 def _year(item):
     for k in ("published", "discovered", "attackdate"):
         val = item.get(k)
@@ -139,7 +147,7 @@ def _ingest():
             loc = _sentence_with(v.get("description") or "", hits[0]) if hits else ""
             victims.append({
                 "post_title": v.get("post_title") or "", "group": v.get("group_name") or "unknown",
-                "activity": v.get("activity") or "", "discovered": v.get("published") or v.get("discovered"),
+                "activity": _sector(v.get("activity")), "discovered": v.get("published") or v.get("discovered"),
                 "year": _year(v), "website": (v.get("website") or "").strip(),
                 "post_url": v.get("post_url") or "", "region": region, "region_hits": hits,
                 "location": loc, "registered_name": "", "maps_location": "", "country": "GB",
@@ -401,10 +409,7 @@ def _share(n, total):
 
 
 def _counts(key, label_default="Unknown"):
-    c = Counter((v.get(key) or label_default) for v in _uk())
-    if key == "activity":
-        c.pop("Not Found", None)
-    return c
+    return Counter((v.get(key) or label_default) for v in _uk())
 
 
 @app.get("/api/summary")
@@ -472,7 +477,9 @@ def api_victims():
     off, lim = _int("offset", 0, 10**6), _int("limit", 200)
     ico = {c["key"] for c in CASES if c["key"]}
     page = [dict(v, ico=breaches.norm(v["post_title"]) in ico) for v in items[off:off + lim]]
-    return jsonify(total=len(items), items=page)
+    facets = {"groups": sorted({v["group"] for v in _uk() if v["group"]}, key=str.lower),
+              "sectors": sorted({v["activity"] for v in _uk() if v["activity"]})}
+    return jsonify(total=len(items), items=page, facets=facets)
 
 
 @app.get("/api/posts")
@@ -511,12 +518,14 @@ def api_intel():
 
 
 # ----------------------------------------------------------------- ICO breaches
-def _cases():
-    """Filtered ICO cases from query args: cyber=1, q, sector, rocu, force, quarter."""
+def _cases(ignore_sector=False):
+    """Filtered ICO cases from query args: cyber=1, q, sector, subsector, rocu, force, quarter."""
     out = CASES
     if request.args.get("cyber") == "1":
         out = [c for c in out if c["cyber"]]
-    for arg, key in (("sector", "sector"), ("quarter", "quarter")):
+    for arg, key in (("sector", "sector"), ("subsector", "subsector"), ("quarter", "quarter")):
+        if ignore_sector and arg != "quarter":
+            continue
         if request.args.get(arg):
             out = [c for c in out if c[key] == request.args[arg]]
     q = request.args.get("q", "").lower()
@@ -608,6 +617,36 @@ def api_breaches_cases():
                           postcode=g.get("postcode"), ransomware_group=rw.get(c["key"])))
     return jsonify(total=len(out), items=items, sectors=sorted({c["sector"] for c in CASES}),
                    rocus=list(breaches.ROCU_FORCES) + ["Scotland", "Northern Ireland", "Unplaced"])
+
+
+@app.get("/api/breaches/sectors")
+def api_breaches_sectors():
+    """All sectors with counts; with ?sector=X, the sub-sector breakdown of that sector."""
+    sel = request.args.get("sector")
+    out = _cases(ignore_sector=True)
+    total = len(out)
+    if sel:
+        sub = [c for c in out if c["sector"] == sel]
+        n = len(sub)
+        items = Counter(c["subsector"] or "Not stated" for c in sub).most_common()
+        return jsonify(sector=sel, total=n, share=_share(n, total),
+                       items=[{"label": k, "count": v, "share": _share(v, n)} for k, v in items])
+    return jsonify(total=total, items=[{"label": k, "count": v, "share": _share(v, total),
+                                        "common": breaches.common_ico(k)}
+                                       for k, v in Counter(c["sector"] for c in out).most_common()])
+
+
+@app.get("/api/compare/sectors")
+def api_compare_sectors():
+    """ICO breach cases vs ransomware victims, both mapped to one approximate common sector list."""
+    ico = Counter(breaches.common_ico(c["sector"]) for c in _cases(ignore_sector=True))
+    rw = Counter(breaches.common_rl(v["activity"]) for v in _uk())
+    ni, nr = sum(ico.values()), sum(rw.values())
+    rows = [{"sector": k, "ico": ico.get(k, 0), "ico_share": _share(ico.get(k, 0), ni),
+             "rw": rw.get(k, 0), "rw_share": _share(rw.get(k, 0), nr)} for k in set(ico) | set(rw)]
+    rows.sort(key=lambda r: -(r["ico_share"] + r["rw_share"]))
+    return jsonify(ico_total=ni, rw_total=nr, rows=rows,
+                   note="Both lists are mapped to one common set of sectors. The mapping is approximate.")
 
 
 if __name__ == "__main__":
