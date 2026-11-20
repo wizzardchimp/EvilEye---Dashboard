@@ -18,6 +18,19 @@ Scotland and Northern Ireland are their own buckets. A victim is placed by the f
 
 Anything else shows as "region unknown". Lookups run in a bounded batch (`GEO_BUDGET`) after an open or Refresh and
 are cached in `DATA_DIR`, so coverage grows with each refresh.
+
+**Companies House matching** accepts a near-exact name, or a good name plus the victim's website domain agreeing with
+the company name (catches trading names and "Ltd"/"Group" variants). It also retries with generic words removed.
+Earlier "no match" results are retried automatically whenever the matching rules change (`MATCH_VERSION` in `geo.py`).
+
+**Overseas / not UK:** ransomware.live sometimes tags foreign companies as UK. A victim is flagged "Overseas / not UK"
+when the first "headquartered / based in ..." phrase names a foreign place, nothing points to the UK, and the website is
+not `.uk`. Offices abroad do not count. These are left out of the "latest UK incidents" ticker.
+
+**Manual placement:** an admin can set any victim's region (or Overseas / not UK) from the **Edit region** button on the
+UK Victims tab, with an optional note. It overrides every automatic method, is stored in PostgreSQL, survives refreshes
+and restarts, and is written to the activity log.
+
 The **Region** selector in the header filters Overview, UK Victims, Attack Feed and Gang Catalog, and is saved as the
 user's preference, which drives the "Latest in <region>" ticker. Alerts & News are national.
 

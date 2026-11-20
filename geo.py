@@ -37,6 +37,9 @@ ROCU_FORCES = {
 FORCE_TO_ROCU = {f: r for r, fs in ROCU_FORCES.items() for f in fs}
 FORCE_TO_ROCU.update({"police-scotland": "Scotland", "northern-ireland": "Northern Ireland"})
 REGIONS = list(ROCU_FORCES) + ["Scotland", "Northern Ireland"]
+OVERSEAS = "Overseas / not UK"            # tagged UK by the source, but based abroad
+FILTER_REGIONS = REGIONS + [OVERSEAS, "Unplaced"]
+MATCH_VERSION = 2                          # bump when matching rules change: older "no match" results are retried
 FORCE_NAMES = {f: f.replace("-", " ").title().replace(" And ", " and ") for f in FORCE_TO_ROCU}
 FORCE_NAMES.update({"west-mercia": "West Mercia", "city-of-london": "City of London",
                     "metropolitan": "Metropolitan Police", "police-scotland": "Police Scotland",
@@ -171,33 +174,118 @@ def resolve_postcode(pc):
     return rec
 
 
-def resolve_company(name):
-    """Companies House: name -> registered-office postcode -> force. Needs a key."""
-    try:
-        r = requests.get("https://api.company-information.service.gov.uk/search/companies",
-                         params={"q": name, "items_per_page": 3}, auth=(CH_KEY or "proxy-injected", ""),
-                         headers=UA, timeout=25)
-        if r.status_code == 429:
-            return {"status": "rate-limited"}
-        if r.status_code in (401, 403):
-            return {"status": "auth-error"}
-        items = r.json().get("items", []) if r.ok else []
-    except Exception:
-        return {"status": "error"}
-    target = norm(name)
-    best, score = None, 0.0
-    for it in items:
-        s = difflib.SequenceMatcher(None, target, norm(it.get("title"))).ratio()
-        if s > score:
-            best, score = it, s
-    if not best or score < 0.92 or not (best.get("address") or {}).get("postal_code"):
+# ----------------------------------------------------------------- overseas detection
+_FOREIGN = ("Australia|Sydney|Melbourne|Brisbane|Auckland|New Zealand|United States|USA|U\\.S\\.|New York|New Jersey|California|Texas|Florida|"
+            "Illinois|Chicago|Atlanta|Seattle|Canada|Toronto|Vancouver|Montreal|Germany|Berlin|Munich|Duisburg|Hamburg|France|Paris|Spain|Madrid|"
+            "Barcelona|Marbella|Italy|Milan|Rome|Netherlands|Amsterdam|Belgium|Brussels|Switzerland|Zurich|Sweden|Stockholm|Norway|Denmark|"
+            "Copenhagen|Poland|Warsaw|India|Mumbai|Bangalore|Delhi|Singapore|Hong Kong|Dubai|UAE|South Africa|Johannesburg|Cape Town|Nigeria|"
+            "Brazil|Mexico|Japan|Tokyo|China|Shanghai|Republic of Ireland|Dublin|Portugal|Lisbon|Greece|Turkey|Israel")
+_FOREIGN_RE = re.compile(r"(?<![\w-])(?:" + _FOREIGN + r")(?![\w-])")
+_HQ_RE = re.compile(r"(?i:headquartered|based|located|domiciled|HQ'?d)\s+(?:in|at)\s+(?:the\s+)?([^.;\n]{0,70})")
+_UK_RE = re.compile(r"\b(?:UK|U\.K\.|United Kingdom|England|Scotland|Wales|Northern Ireland|Britain|British)\b")
+
+
+def detect_overseas(text, website=""):
+    """Probable overseas head office: the text says it is HQ'd/based abroad, and nothing in it points to the UK.
+    Offices abroad are not enough (a UK group with a Sydney office is still UK)."""
+    if (website or "").lower().strip().rstrip("/").endswith(".uk"):
+        return None
+    m = _HQ_RE.search(text or "")          # the FIRST "based/headquartered in ..." phrase decides
+    if not m:
+        return None
+    span = m.group(1)
+    if _UK_RE.search(span) or place_text(span):
+        return None
+    f = _FOREIGN_RE.search(span)
+    return f.group(0) if f else None
+
+
+# ----------------------------------------------------------------- Companies House
+_GENERIC = re.compile(r"\b(group|holdings|holding|services|solutions|international|the|uk|limited|ltd|plc|llp)\b", re.I)
+_DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$")
+
+
+def domain_label(site):
+    """'www.birchallfoodservice.co.uk' -> 'birchallfoodservice'. Empty if the field is not a domain."""
+    s = re.sub(r"^https?://", "", (site or "").lower().strip()).split("/")[0]
+    s = re.sub(r"^www\.", "", s)
+    if not _DOMAIN_RE.match(s):
+        return ""
+    parts = s.split(".")
+    label = parts[-3] if len(parts) >= 3 and parts[-2] in ("co", "org", "ltd", "plc", "me", "net", "gov", "ac", "sch") else parts[-2]
+    return re.sub(r"[^a-z0-9]", "", label)
+
+
+def _compact(name):
+    return re.sub(r"\s+", "", norm(name))
+
+
+def score_candidate(name, label, item):
+    """-> (accepted, similarity, confidence). Accept on a near-exact name, or a good name plus the website domain
+    agreeing with the company name (catches trading names and Ltd/Group variants)."""
+    s = difflib.SequenceMatcher(None, norm(name), norm(item.get("title"))).ratio()
+    c = _compact(item.get("title"))
+    dom = len(label) >= 4 and bool(c) and (c == label or c.startswith(label) or label.startswith(c)
+                                           or difflib.SequenceMatcher(None, c, label).ratio() >= 0.85)
+    active = item.get("company_status") == "active"
+    if s >= 0.92:
+        return True, s, "name"
+    if dom and (s >= 0.75 or (s >= 0.6 and active)):
+        return True, s, "name+domain"
+    return False, s, ""
+
+
+def _ch_search(q):
+    r = requests.get("https://api.company-information.service.gov.uk/search/companies",
+                     params={"q": q, "items_per_page": 5}, auth=(CH_KEY or "proxy-injected", ""), headers=UA, timeout=25)
+    return r
+
+
+def resolve_company(name, website=""):
+    """Companies House: name (and website domain) -> registered-office postcode -> force. Needs a key."""
+    label = domain_label(website)
+    queries = [name]
+    simple = re.sub(r"\s+", " ", _GENERIC.sub(" ", name)).strip()
+    if simple and norm(simple) != norm(name) and len(simple) >= 3:
+        queries.append(simple)
+    best, best_key = None, (-1, -1, -1.0)
+    for i, q in enumerate(queries):
+        try:
+            r = _ch_search(q)
+            if r.status_code == 429:
+                return {"status": "rate-limited"}
+            if r.status_code in (401, 403):
+                return {"status": "auth-error"}
+            items = r.json().get("items", []) if r.ok else []
+        except Exception:
+            return {"status": "error"}
+        for it in items:
+            ok, s, conf = score_candidate(name, label, it)
+            if ok and (it.get("address") or {}).get("postal_code"):
+                key = (1, 1 if it.get("company_status") == "active" else 0, s)
+                if key > best_key:
+                    best, best_key, best_conf = it, key, conf
+        if best:
+            break
+        if i + 1 < len(queries):
+            time.sleep(0.55)
+    if not best:
         return {"status": "no-match"}
     rec = resolve_postcode(best["address"]["postal_code"])
     rec["company"] = best.get("title")
+    rec["confidence"] = best_conf
     return rec
 
 
 TERMINAL = ("placed", "no-match", "no-force", "no-postcode")
+
+
+def is_terminal(rec):
+    """A placed result is final. A 'no match' is only final under the current matching rules, so improving the
+    rules (MATCH_VERSION) automatically retries the earlier misses."""
+    if not rec:
+        return False
+    return rec.get("status") == "placed" or (rec.get("status") in TERMINAL and rec.get("v") == MATCH_VERSION)
 
 
 def geo_pass(victims, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False):
@@ -205,9 +293,11 @@ def geo_pass(victims, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False
     todo, seen = [], set()
     for v in sorted(victims, key=lambda v: str(v.get("discovered") or ""), reverse=True):
         k = v["key"]
-        if not k or k in seen or (geo.get(k) or {}).get("status") in TERMINAL:
+        if not k or k in seen or is_terminal(geo.get(k)) or v.get("manual"):
             continue
         seen.add(k)
+        if v.get("text_overseas") or v.get("region_source") == "text-overseas":
+            continue            # probable overseas head office: do not match it to a UK company
         # a victim already placed from place names only needs the API if there is a postcode to make it precise
         if v.get("region_source") == "text" and not v.get("postcode_hint"):
             continue
@@ -223,12 +313,13 @@ def geo_pass(victims, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False
             rec = resolve_postcode(v["postcode_hint"])
             rec["source"] = "postcode"
         if (not rec or rec["status"] != "placed") and CH_ENABLED:
-            rec, used_ch = resolve_company(v["post_title"]), True
+            rec, used_ch = resolve_company(v["post_title"], v.get("website", "")), True
             rec["source"] = "companies-house"
         if not rec:
             continue
         if rec["status"] in ("rate-limited", "auth-error"):
             break
+        rec["v"] = MATCH_VERSION
         geo[v["key"]] = rec
         done += 1
         if done % 25 == 0:

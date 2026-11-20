@@ -34,7 +34,7 @@ BASE = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SNAPSHOT = DATA_DIR / "snapshot.json"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 PASSWORD = os.environ.get("EVILEYE_PASSWORD", "")          # legacy password, and first-admin bootstrap
 ADMIN_USER = os.environ.get("EVILEYE_ADMIN_USER", "admin")
@@ -54,6 +54,7 @@ STATE = {"victims": [], "posts": [], "gangs": [], "intel": [], "last_refresh": {
 _refreshing = False
 _geo_running = False
 GEO = geo.load_geo(DATA_DIR)
+OVERRIDES = {}          # victim key -> {rocu, note, set_by}: manual placements made by an admin (PostgreSQL)
 
 
 def _sector(a):
@@ -91,15 +92,34 @@ def _year(item):
     return "unknown"
 
 
+def load_overrides():
+    if LEGACY:
+        return
+    try:
+        rows = db.many("select key, rocu, note, set_by from placement_overrides")
+        OVERRIDES.clear()
+        OVERRIDES.update({r["key"]: r for r in rows})
+    except Exception as e:
+        STATE["errors"]["overrides"] = str(e)
+
+
 def _apply_geo(victims):
-    """Region = API result from the cache if there is one, else the place-name guess, else Unplaced."""
+    """Region, in order of trust: an admin's manual placement, an API result (postcode / Companies House),
+    the place-name guess, a probable overseas head office, else Unplaced."""
     for v in victims:
         g = GEO.get(v["key"]) or {}
-        if g.get("status") == "placed":
+        ov = OVERRIDES.get(v["key"])
+        v["manual"] = bool(ov)
+        v["override_note"] = ov["note"] if ov else ""
+        if ov:
+            v.update(rocu=ov["rocu"], force="", region_source="manual", registered_name=v.get("registered_name", ""))
+        elif g.get("status") == "placed":
             v.update(rocu=g["rocu"], force=g["force"], region_source=g.get("source", "api"),
                      registered_name=g.get("company") or "")
         elif v.get("text_force"):
             v.update(force=v["text_force"], rocu=geo.rocu_of(v["text_force"]), region_source="text")
+        elif v.get("text_overseas"):
+            v.update(force="", rocu=geo.OVERSEAS, region_source="text-overseas")
         else:
             v.update(force="", rocu="Unplaced", region_source="")
         v["force_name"] = geo.FORCE_NAMES.get(v["force"], "")
@@ -137,13 +157,16 @@ def _ingest():
             desc = v.get("description") or ""
             title = v.get("post_title") or ""
             hit = geo.place_text(title + ". " + desc)
+            pc = geo.postcode_in(desc)
+            over = None if (hit or pc) else geo.detect_overseas(title + ". " + desc, v.get("website") or "")
             victims.append({
                 "post_title": title, "key": geo.norm(title), "group": v.get("group_name") or "unknown",
                 "activity": _sector(v.get("activity")), "discovered": v.get("published") or v.get("discovered"),
                 "seen": v.get("discovered") or v.get("published") or "", "year": _year(v),
                 "website": (v.get("website") or "").strip(), "post_url": v.get("post_url") or "",
                 "text_force": hit[0] if hit else "", "text_term": hit[1] if hit else "",
-                "postcode_hint": geo.postcode_in(desc), "registered_name": ""})
+                "postcode_hint": pc, "text_overseas": over or "", "registered_name": ""})
+        load_overrides()
         _apply_geo(victims)
         new["victims"] = victims
         stamps["rl_victims_gb"] = _now_iso()
@@ -347,8 +370,11 @@ if not LEGACY:
     try:
         db.init()
         bootstrap_admin()
+        load_overrides()
     except Exception as e:                      # keep serving; login reports the database error
         STATE["errors"]["db"] = str(e)
+if STATE["victims"]:
+    _apply_geo(STATE["victims"])
 
 
 def current_user():
@@ -488,14 +514,14 @@ def api_refresh():
 def api_me():
     u = current_user()
     return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY,
-                   regions=geo.REGIONS + ["Unplaced"])
+                   regions=geo.FILTER_REGIONS)
 
 
 @app.put("/api/me/region")
 def api_me_region():
     u = current_user()
     r = (request.get_json(silent=True) or {}).get("region", "")
-    if r and r not in geo.REGIONS + ["Unplaced"]:
+    if r and r not in geo.FILTER_REGIONS:
         return jsonify(error="unknown region"), 400
     if LEGACY:
         session["region"] = r
@@ -556,7 +582,7 @@ def admin_users():
                       from users u order by lower(u.username)""")
     return jsonify(users=[{**r, "created_at": r["created_at"].isoformat(),
                            "last_login": r["last_login"].isoformat() if r["last_login"] else None} for r in rows],
-                   regions=geo.REGIONS + ["Unplaced"])
+                   regions=geo.FILTER_REGIONS)
 
 
 @app.post("/api/admin/users")
@@ -571,7 +597,7 @@ def admin_user_create():
         return jsonify(error="Password must be at least 10 characters."), 400
     if role not in ("admin", "user"):
         return jsonify(error="Role must be admin or user."), 400
-    if region and region not in geo.REGIONS + ["Unplaced"]:
+    if region and region not in geo.FILTER_REGIONS:
         return jsonify(error="Unknown region."), 400
     if db.one("select 1 as x from users where lower(username)=lower(%s)", (username,)):
         return jsonify(error="That username already exists."), 409
@@ -611,7 +637,7 @@ def admin_user_update(uid):
         vals.append(bool(b["active"]))
         notes.append("enabled" if b["active"] else "disabled")
     if "region" in b:
-        if b["region"] and b["region"] not in geo.REGIONS + ["Unplaced"]:
+        if b["region"] and b["region"] not in geo.FILTER_REGIONS:
             return jsonify(error="Unknown region."), 400
         sets.append("region=%s")
         vals.append(b["region"])
@@ -683,6 +709,43 @@ def admin_activity_csv():
                     headers={"Content-Disposition": "attachment; filename=evileye-activity.csv"})
 
 
+# ---- admin: manual placement of a victim into a region
+PLACEABLE = geo.REGIONS + [geo.OVERSEAS]
+
+
+@app.put("/api/admin/placement")
+@admin_required
+def admin_placement_set():
+    b = request.get_json(silent=True) or {}
+    title, rocu, note = (b.get("title") or "").strip(), b.get("rocu", ""), (b.get("note") or "").strip()[:200]
+    key = geo.norm(title)
+    if not key or not any(v["key"] == key for v in STATE["victims"]):
+        return jsonify(error="Unknown victim."), 404
+    if rocu not in PLACEABLE:
+        return jsonify(error="Choose a ROCU region, Scotland, Northern Ireland or Overseas / not UK."), 400
+    db.run("""insert into placement_overrides (key, victim, rocu, note, set_by) values (%s,%s,%s,%s,%s)
+              on conflict (key) do update set rocu=excluded.rocu, note=excluded.note, set_by=excluded.set_by, set_at=now()""",
+           (key, title, rocu, note, current_user()["username"]))
+    load_overrides()
+    _apply_geo(STATE["victims"])
+    log("placement_set", f"{title} -> {rocu}" + (f" ({note})" if note else ""))
+    return jsonify(ok=True)
+
+
+@app.delete("/api/admin/placement")
+@admin_required
+def admin_placement_clear():
+    title = (request.args.get("title") or "").strip()
+    key = geo.norm(title)
+    if not db.one("select 1 as x from placement_overrides where key=%s", (key,)):
+        return jsonify(error="No manual placement for that victim."), 404
+    db.run("delete from placement_overrides where key=%s", (key,))
+    load_overrides()
+    _apply_geo(STATE["victims"])
+    log("placement_clear", title)
+    return jsonify(ok=True)
+
+
 # ----------------------------------------------------------------- data queries
 def _region():
     return request.args.get("rocu", "")
@@ -716,11 +779,12 @@ def api_summary():
         by_year=[{"year": y, "count": n} for y, n in sorted(years.items())][-8:],
         top_gangs=[{"group": g_, "count": n} for g_, n in _counts("group").most_common(8)],
         top_sectors=[{"sector": s, "count": n} for s, n in _counts("activity").most_common(8)],
-        by_region=[{"region": r, "count": by_region.get(r, 0)} for r in geo.REGIONS + ["Unplaced"]],
-        placement={"total": len(allv), "placed": len(allv) - by_region.get("Unplaced", 0),
+        by_region=[{"region": r, "count": by_region.get(r, 0)} for r in geo.FILTER_REGIONS],
+        placement={"total": len(allv), "placed": len(allv) - by_region.get("Unplaced", 0) - by_region.get(geo.OVERSEAS, 0),
                    "from_text": src.get("text", 0), "from_postcode": src.get("postcode", 0),
-                   "from_companies_house": src.get("companies-house", 0), "unplaced": by_region.get("Unplaced", 0),
-                   "looked_up": sum(1 for x in GEO.values() if x.get("status") in geo.TERMINAL),
+                   "from_companies_house": src.get("companies-house", 0), "from_manual": src.get("manual", 0),
+                   "overseas": by_region.get(geo.OVERSEAS, 0), "unplaced": by_region.get("Unplaced", 0),
+                   "looked_up": sum(1 for x in GEO.values() if geo.is_terminal(x)),
                    "api_enabled": geo.CH_ENABLED, "running": _geo_running})
 
 
@@ -830,9 +894,10 @@ def api_ticker():
     # skip anonymous "Company #123 [PENDING EXPOSURE]" placeholders: they say nothing useful in a ticker
     named = [v for v in STATE["victims"] if not re.match(r"^Company #\d+", v["post_title"])]
     recent = sorted(named, key=lambda v: str(v.get("seen") or ""), reverse=True)
+    uk_recent = [v for v in recent if v["rocu"] != geo.OVERSEAS]       # probable overseas HQs are not UK incidents
     pick = lambda v: {"title": v["post_title"], "group": v["group"], "sector": v["activity"], "seen": v.get("seen"),
                       "rocu": v["rocu"], "force": v["force_name"], "website": v["website"]}
-    return jsonify(region=region, uk=[pick(v) for v in recent[:5]],
+    return jsonify(region=region, uk=[pick(v) for v in uk_recent[:5]],
                    regional=[pick(v) for v in [x for x in recent if x["rocu"] == region][:5]] if region else [],
                    updated=STATE.get("last_refresh", {}).get("rl_victims_gb"))
 

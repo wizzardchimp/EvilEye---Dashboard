@@ -35,6 +35,15 @@ create table if not exists activity (
 create index if not exists activity_ts on activity (ts desc);
 create index if not exists activity_user on activity (lower(username), ts desc);
 create index if not exists activity_event on activity (event, ts desc);
+
+create table if not exists placement_overrides (
+    key       text primary key,
+    victim    text not null,
+    rocu      text not null,
+    note      text not null default '',
+    set_by    text not null default '',
+    set_at    timestamptz not null default now()
+);
 """
 
 

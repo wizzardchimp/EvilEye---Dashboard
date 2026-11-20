@@ -132,8 +132,8 @@ async function loadOverview() {
       row.addEventListener("click", () => { $("#region").value = rows[i][0]; $("#region").dispatchEvent(new Event("change")); });
     });
     const p = d.placement;
-    $("#region-note").innerHTML = `<strong>${p.placed}</strong> of ${p.total} victims placed (${p.from_text} from place names, ${p.from_postcode} postcodes, ${p.from_companies_house} Companies House). ` +
-      `${p.unplaced} unplaced. ${p.api_enabled ? "" : "Companies House lookup is off: set COMPANIES_HOUSE_KEY. "}${p.running ? "<em>Looking up regions now…</em>" : ""}`;
+    $("#region-note").innerHTML = `<strong>${p.placed}</strong> of ${p.total} victims placed to a UK region (${p.from_text} from place names, ${p.from_postcode} postcodes, ${p.from_companies_house} Companies House, ${p.from_manual} set manually). ` +
+      `${p.overseas} look overseas / not UK, ${p.unplaced} still unplaced. ${p.api_enabled ? "" : "Companies House lookup is off: set COMPANIES_HOUSE_KEY. "}${p.running ? "<em>Looking up regions now…</em>" : ""}`;
   } catch (e) {
     holder.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
   }
@@ -216,9 +216,17 @@ modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.hidden) closeModal(); });
 
 // ------------------------------------------------------------------ victims
-const regionBadge = (v) => v.rocu === "Unplaced"
-  ? '<span class="badge src">region unknown</span>'
-  : `<span class="badge uk">${esc(v.rocu)}</span><div class="meta">${esc(v.force_name)}${v.region_source ? ` · by ${esc(v.region_source.replace("-", " "))}` : ""}</div>`;
+let lastVictims = [];
+const canEditRegion = () => ME && ME.role === "admin" && ME.database;
+function regionBadge(v) {
+  const edit = canEditRegion() ? `<div><button type="button" class="more small" data-edit="${esc(v.post_title)}">Edit region</button></div>` : "";
+  const manual = v.region_source === "manual" ? ` · set manually${v.override_note ? `: ${esc(v.override_note)}` : ""}` : "";
+  if (v.rocu === "Unplaced") return `<span class="badge src">region unknown</span>${edit}`;
+  if (v.rocu === "Overseas / not UK") {
+    return `<span class="badge off">Overseas / not UK</span><div class="meta">${v.region_source === "manual" ? `set manually${v.override_note ? `: ${esc(v.override_note)}` : ""}` : "probably based abroad"}</div>${edit}`;
+  }
+  return `<span class="badge uk">${esc(v.rocu)}</span><div class="meta">${esc(v.force_name)}${v.region_source && !manual ? ` · by ${esc(v.region_source.replace("-", " "))}` : ""}${manual}</div>${edit}`;
+}
 async function loadVictims() {
   const tbody = $("#victim-rows");
   const q = $("#vq").value.trim(), group = $("#vgroup").value, sector = $("#vsector").value;
@@ -230,12 +238,13 @@ async function loadVictims() {
   try {
     const d = await api(`/api/victims?${rq(extra)}`);
     $("#vcount").textContent = `${d.total} UK victims${region ? ` in ${region}` : ""} (showing first 200)`;
+    lastVictims = d.items;
     fillFacets(d.facets);
     tbody.innerHTML = d.items.length
       ? d.items.map((v) => `
         <tr>
           <td><strong>${esc(v.post_title)}</strong>
-            ${v.website ? `<div class="meta"><a href="https://${esc(v.website)}" target="_blank" rel="noopener noreferrer">${esc(v.website)}</a></div>` : ""}
+            ${/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(\/.*)?$/i.test(v.website || "") ? `<div class="meta"><a href="https://${esc(v.website)}" target="_blank" rel="noopener noreferrer">${esc(v.website)}</a></div>` : ""}
             ${v.registered_name ? `<div class="meta">${esc(v.registered_name)}</div>` : ""}</td>
           <td><span class="badge grp">${esc(v.group)}</span></td>
           <td>${esc(v.activity || "—")}</td>
@@ -255,6 +264,35 @@ function fillFacets(f) {
   $("#vsector").innerHTML = '<option value="">All sectors</option>' + f.sectors.map((s) => `<option>${esc(s)}</option>`).join("");
   facetsFilled = true;
 }
+
+$("#victim-rows").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-edit]");
+  if (!b) return;
+  const v = lastVictims.find((x) => x.post_title === b.dataset.edit);
+  if (!v) return;
+  openModal();
+  $("#modal-back").hidden = true;
+  $("#modal-title").textContent = `Region: ${v.post_title}`;
+  $("#modal-explain").textContent = `Currently ${v.rocu === "Unplaced" ? "unplaced" : v.rocu}${v.region_source ? ` (by ${v.region_source.replace("-", " ")})` : ""}. A manual placement overrides every automatic method and survives refreshes.`;
+  const opts = ME.regions.filter((r) => r !== "Unplaced");
+  $("#modal-body").innerHTML = `<form id="plform" class="form-row">
+      <label class="field">Region<select id="pl-rocu" class="search">${opts.map((r) => `<option ${r === v.rocu ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
+      <label class="field">Note (optional)<input id="pl-note" class="search" maxlength="200" value="${esc(v.override_note || "")}" placeholder="e.g. HQ confirmed on company website"></label>
+      <button class="btn" type="submit">Save</button>
+      ${v.region_source === "manual" ? '<button class="more danger" type="button" id="pl-clear">Remove manual placement</button>' : ""}
+    </form><p id="pl-msg" class="hint"></p>`;
+  const done = () => { closeModal(); loadVictims(); loadTicker(); toast("Region updated"); };
+  $("#plform").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try { await api("/api/admin/placement", { method: "PUT", body: { title: v.post_title, rocu: $("#pl-rocu").value, note: $("#pl-note").value } }); done(); }
+    catch (err) { $("#pl-msg").textContent = err.message; }
+  });
+  const clr = $("#pl-clear");
+  if (clr) clr.addEventListener("click", async () => {
+    try { await api(`/api/admin/placement?title=${encodeURIComponent(v.post_title)}`, { method: "DELETE" }); done(); }
+    catch (err) { $("#pl-msg").textContent = err.message; }
+  });
+});
 
 // ------------------------------------------------------------------ feed
 async function loadPosts() {

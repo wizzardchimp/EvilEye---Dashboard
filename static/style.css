@@ -318,3 +318,5 @@ h3.sub { font-size: 11.5px; color: var(--muted); font-weight: 600; text-transfor
 @media (max-width: 640px) { .region-pick { width: 100%; } .region-pick select.search { flex: 1; } }
 
 .status-row { margin-left: auto; flex-wrap: wrap; }
+
+.more.small { padding: 2px 8px; font-size: 11.5px; margin-top: 5px; }
