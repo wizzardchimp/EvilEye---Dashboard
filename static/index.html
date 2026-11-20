@@ -14,29 +14,44 @@
         <span class="logo"><img src="/static/angry-eye.svg" width="32" height="32" alt="EvilEye"></span>
         <div>
           <h1>EvilEye</h1>
-          <p class="tagline">the private eye on the patch — ransomware.live · RansomLook · NCSC · CISA KEV</p>
+          <p class="tagline">the private eye on the patch &mdash; ransomware.live · RansomLook · NCSC · CISA KEV · news</p>
         </div>
       </div>
       <div class="status-row">
+        <label class="region-pick" title="Filters the dashboard to one regional organised crime unit (ROCU) area. Also sets your regional ticker.">
+          <span>Region</span>
+          <select id="region" class="search" aria-label="ROCU region"><option value="">All UK</option></select>
+        </label>
         <div id="last-updated" class="updated">syncing&hellip;</div>
         <button id="refresh-now" class="more" type="button">Refresh</button>
+        <button id="usermenu" class="more" type="button" aria-haspopup="dialog">Account</button>
         <a class="more" href="/logout">Log out</a>
       </div>
     </div>
   </header>
 
-  <nav class="tabs">
+  <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
-    <button class="tab" data-tab="wmidlands">West Midlands</button>
     <button class="tab" data-tab="victims">UK Victims</button>
     <button class="tab" data-tab="posts">Attack Feed</button>
     <button class="tab" data-tab="gangs">Gang Catalog</button>
-    <button class="tab" data-tab="alerts">Alerts</button>
-    <button class="tab" data-tab="breaches">Breaches</button>
+    <button class="tab" data-tab="alerts">Alerts &amp; News</button>
+    <button class="tab admin-only" data-tab="users" hidden>Users</button>
+    <button class="tab admin-only" data-tab="activity" hidden>Activity</button>
   </nav>
 
   <main>
     <section id="tab-overview" class="panel active">
+      <div class="ticker" aria-live="polite">
+        <div class="ticker-col">
+          <div class="ticker-head"><span class="live-dot"></span><h3>Latest UK incidents</h3><span id="tk-updated" class="meta"></span></div>
+          <ul id="tk-uk" class="ticker-list"></ul>
+        </div>
+        <div class="ticker-col">
+          <div class="ticker-head"><span class="live-dot"></span><h3>Latest in <span id="tk-region">your region</span></h3></div>
+          <ul id="tk-reg" class="ticker-list"></ul>
+        </div>
+      </div>
       <div id="stat-cards" class="stat-grid"></div>
       <div class="chart-grid">
         <div class="card" id="card-year">
@@ -51,14 +66,12 @@
           <div class="card-head"><h3>Top sectors</h3><button class="more" type="button" data-detail="sector">More</button></div>
           <div id="chart-sectors" class="bars"></div>
         </div>
+        <div class="card" id="card-region">
+          <div class="card-head"><h3>UK victims by ROCU region</h3></div>
+          <p id="region-note" class="hint"></p>
+          <div id="chart-regions" class="bars"></div>
+        </div>
       </div>
-    </section>
-
-    <section id="tab-wmidlands" class="panel">
-      <div class="toolbar">
-        <p class="hint">A town name is not enough. The website must look British (.uk, a UK postcode, or England) and must not be a US or other overseas address. Burton-on-Trent and Pershore still count. A registered office is not every operating site.</p>
-      </div>
-      <div id="wm-list" class="victim-grid"></div>
     </section>
 
     <section id="tab-victims" class="panel">
@@ -111,11 +124,15 @@
 
     <section id="tab-alerts" class="panel">
       <div class="toolbar">
-        <input id="aq" class="search" type="search" placeholder="Search alerts, CVEs, posts&hellip;">
+        <input id="aq" class="search" type="search" placeholder="Search alerts, CVEs, news&hellip;">
         <select id="asource" class="search">
           <option value="">All sources</option>
           <option value="ncsc">NCSC</option>
           <option value="cisa">CISA KEV</option>
+          <option value="hibp">Have I Been Pwned</option>
+          <option value="bleepingcomputer">BleepingComputer</option>
+          <option value="krebs">Krebs on Security</option>
+          <option value="sans-isc">SANS ISC</option>
           <option value="ransomlook">RansomLook</option>
           <option value="ransomware.live">Press</option>
         </select>
@@ -125,38 +142,44 @@
       <div id="alert-list" class="post-list"></div>
     </section>
 
-    <section id="tab-breaches" class="panel">
-      <div class="toolbar">
-        <div class="radio-group" role="radiogroup" aria-label="Breach scope">
-          <label><input type="radio" name="bcyber" value="1" checked> Cyber incidents</label>
-          <label><input type="radio" name="bcyber" value=""> All breaches</label>
-        </div>
-        <input id="bq" class="search" type="search" placeholder="Search organisation, sector&hellip;">
-        <select id="bsector" class="search"><option value="">All sectors</option></select>
-        <select id="brocu" class="search"><option value="">All regions (ROCU)</option></select>
-        <button id="brefresh" class="btn">Refresh</button>
-        <button id="bclear" class="more" type="button" hidden>Clear sector / region filter</button>
+    <section id="tab-users" class="panel">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-head"><h3>Add a user</h3></div>
+        <form id="uform" class="form-row" autocomplete="off">
+          <label class="field">Username<input id="u-name" class="search" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="off"></label>
+          <label class="field">Password (10+ characters)
+            <span class="pw"><input id="u-pass" class="search" type="text" required minlength="10" autocomplete="new-password"><button type="button" class="more" id="u-gen">Generate</button></span>
+          </label>
+          <label class="field">Role<select id="u-role" class="search"><option value="user">User</option><option value="admin">Admin</option></select></label>
+          <label class="field">Region<select id="u-region" class="search"><option value="">All UK</option></select></label>
+          <button class="btn" type="submit">Add user</button>
+        </form>
+        <p id="u-msg" class="hint" role="status"></p>
       </div>
-      <p id="bnote" class="hint"></p>
-      <div id="b-stats" class="stat-grid"></div>
-      <div class="chart-grid">
-        <div class="card"><div class="card-head"><h3>Cases by quarter</h3></div><div id="b-quarter" class="bars"></div></div>
-        <div class="card"><div class="card-head"><h3>Top sectors</h3><button class="more" type="button" id="b-sectors-more">More</button></div><div id="b-sectors" class="bars"></div></div>
-        <div class="card"><div class="card-head"><h3>By ROCU region</h3></div><p id="b-cover" class="hint"></p><div id="b-regions" class="bars"></div></div>
-      </div>
-      <div class="card" style="margin-bottom:18px">
-        <div class="card-head"><h3>Sector comparison: ICO breaches vs ransomware victims</h3></div>
-        <p id="b-cmp-note" class="hint"></p>
-        <div class="cmp-legend"><span><i class="sw ico"></i>ICO cases</span><span><i class="sw rw"></i>Ransomware victims (UK)</span></div>
-        <div id="b-compare" class="cmp"></div>
-      </div>
-      <p id="bcount" class="count"></p>
       <div class="table-wrap">
         <table class="table">
-          <thead><tr><th>Organisation</th><th>Sector</th><th>Cyber</th><th>Completed</th><th>Region</th></tr></thead>
-          <tbody id="b-rows"></tbody>
+          <thead><tr><th>User</th><th>Role</th><th>Region</th><th>Status</th><th>Last login</th><th>Events</th><th>Actions</th></tr></thead>
+          <tbody id="user-rows"></tbody>
         </table>
       </div>
+    </section>
+
+    <section id="tab-activity" class="panel">
+      <div class="toolbar">
+        <select id="act-user" class="search"><option value="">All users</option></select>
+        <select id="act-event" class="search"><option value="">All events</option></select>
+        <input id="act-q" class="search" type="search" placeholder="Search detail&hellip;">
+        <button id="act-refresh" class="btn">Refresh</button>
+        <a id="act-csv" class="more" href="/api/admin/activity.csv">Export CSV</a>
+      </div>
+      <p id="act-count" class="count"></p>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Time</th><th>User</th><th>Event</th><th>Detail</th><th>IP</th></tr></thead>
+          <tbody id="act-rows"></tbody>
+        </table>
+      </div>
+      <p><button id="act-more" class="more" type="button" hidden>Load more</button></p>
     </section>
   </main>
 
@@ -164,8 +187,8 @@
     Data: <a href="https://www.ransomware.live" target="_blank" rel="noopener">ransomware.live</a> ·
     <a href="https://www.ransomlook.io" target="_blank" rel="noopener">RansomLook</a> ·
     <a href="https://github.com/fastfire/deepdarkCTI" target="_blank" rel="noopener">deepdarkCTI</a> ·
-    NCSC · CISA KEV · ICO (Open Government Licence). Refreshes when you open the page or press Refresh.
-    For research purposes only.
+    NCSC · CISA KEV · Have I Been Pwned · BleepingComputer · Krebs on Security · SANS ISC.
+    Refreshes when you open the page or press Refresh. For research purposes only.
   </footer>
 
   <div id="modal" class="modal" hidden>
@@ -185,6 +208,6 @@
     <span class="awake-knob" aria-hidden="true"></span>
     <span class="awake-label">Keep screen on</span>
   </button>
-  <script src="/static/app.js?v=15"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>

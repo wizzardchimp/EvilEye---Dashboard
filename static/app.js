@@ -1,86 +1,139 @@
 const $ = (sel) => document.querySelector(sel);
-const fmtDate = (iso) => {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toUTCString().slice(5, 16);
-};
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtDate = (iso) => (iso ? new Date(iso).toUTCString().slice(5, 16) : "—");
+const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—");
+function ago(iso) {
+  if (!iso) return "";
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 60 * 24) return `${Math.round(m / 60)}h ago`;
+  return `${Math.round(m / 1440)}d ago`;
+}
+function debounce(fn, ms) {
+  let t;
+  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+
+let ME = null;       // { username, role, region, database, regions }
+let region = "";     // selected ROCU region ("" = all UK); this is also the user's saved preference
+
+// ------------------------------------------------------------------ api
+async function api(path, opts = {}) {
+  const o = { ...opts, headers: { ...(opts.headers || {}), "X-Requested-With": "fetch" } };
+  if (o.body && typeof o.body !== "string") { o.body = JSON.stringify(o.body); o.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(path, o);
+  if (r.status === 401) { location.href = "/login"; throw new Error("Unauthorized"); }
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* no body */ }
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+// what you did is logged for the admin (tab views, searches, filters, copies); fire and forget
+function track(event, detail) {
+  fetch("/api/activity", { method: "POST", headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" },
+    body: JSON.stringify({ event, detail: String(detail ?? "").slice(0, 200) }) }).catch(() => {});
+}
+const rq = (extra = {}) => {
+  const p = new URLSearchParams(extra);
+  if (region) p.set("rocu", region);
+  return p;
+};
 
 // ------------------------------------------------------------------ tabs
+const TABS = { overview: loadOverview, victims: loadVictims, posts: loadPosts, gangs: loadGangs, alerts: loadAlerts, users: loadUsers, activity: loadActivity };
+const activeTab = () => document.querySelector(".tab.active").dataset.tab;
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === btn));
-    document.querySelectorAll(".panel").forEach((p) => {
-      p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`);
-    });
+    document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
+    track("tab_view", btn.dataset.tab);
     refreshCurrent();
   });
 });
+function refreshCurrent() { (TABS[activeTab()] || loadOverview)(); }
 
-let loadedTab = null;
-function refreshCurrent() {
-  const active = document.querySelector(".tab.active").dataset.tab;
-  if (active === "overview") loadOverview();
-  else if (active === "wmidlands") loadWm();
-  else if (active === "victims") loadVictims();
-  else if (active === "posts") loadPosts();
-  else if (active === "gangs") loadGangs();
-  else if (active === "alerts") loadAlerts();
-  else if (active === "breaches") loadBreaches();
-}
-
-async function api(path) {
-  const r = await fetch(path);
-  if (r.status === 401) {
-    location.href = "/login";
-    throw new Error("Unauthorized");
-  }
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
-}
-
+// ------------------------------------------------------------------ health / status
 async function loadHealth() {
   try {
     const h = await api("/health");
-    const errs = h.errors;
-    const last = h.last_refresh?.rl_victims_gb || h.last_refresh?.rl_victims_gb;
+    const last = h.last_refresh?.rl_victims_gb;
     const el = $("#last-updated");
-    if (last) {
-      const when = new Date(last + (last.includes("Z") || /[+-]\d\d:\d\d$/.test(last) ? "" : "Z"));
-      const mins = Math.max(0, Math.round((Date.now() - when.getTime()) / 60000));
-      const ago = mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)}h ago`;
-      el.innerHTML = h.refreshing
-        ? `<span class="ok">refreshing…</span>`
-        : `<span class="ok">synced ${ago}${h.placing ? " · placing organisations" : ""}</span>`;
-    } else if (errs) {
-      el.innerHTML = `<span class="err">ingest error on first sync; retrying…</span>`;
-    } else {
-      el.innerHTML = `<span class="ok">connected</span>`;
-    }
-  } catch {
-    $("#last-updated").innerHTML = `<span class="err">offline</span>`;
+    if (h.refreshing) el.innerHTML = '<span class="ok">refreshing…</span>';
+    else if (last) el.innerHTML = `<span class="ok">synced ${ago(last)}${h.placing ? " · placing regions" : ""}</span>`;
+    else if (h.errors) el.innerHTML = '<span class="err">ingest error on first sync; retrying…</span>';
+    else el.innerHTML = '<span class="ok">connected</span>';
+    return h;
+  } catch (e) {
+    $("#last-updated").innerHTML = '<span class="err">offline</span>';
+    return {};
   }
 }
+
+// ------------------------------------------------------------------ region selector (the header filter)
+function buildRegionSelect() {
+  $("#region").innerHTML = '<option value="">All UK</option>' + ME.regions.map((r) => `<option>${esc(r)}</option>`).join("");
+  $("#region").value = region;
+}
+$("#region").addEventListener("change", async () => {
+  region = $("#region").value;
+  try { await api("/api/me/region", { method: "PUT", body: { region } }); } catch (e) { toast("Could not save your region: " + e.message); }
+  ME.region = region;
+  loadTicker();
+  refreshCurrent();
+});
+
+// ------------------------------------------------------------------ ticker (reads the server's cache; no external calls)
+let tickerSeen = new Set();
+const sectorShort = (s) => (s && s !== "Unclassified" ? s : "");
+function tickerItem(x, showRegion, fresh) {
+  const meta = [`<span class="badge grp">${esc(x.group)}</span>`, esc(sectorShort(x.sector)), ago(x.seen)].filter(Boolean).join(" · ");
+  const reg = showRegion ? `<span class="badge ${x.rocu === "Unplaced" ? "src" : "uk"}">${esc(x.rocu === "Unplaced" ? "region unknown" : x.rocu)}</span>` : "";
+  return `<li class="${fresh ? "fresh" : ""}"><div class="tk-title">${esc(x.title)} ${reg}</div><div class="meta">${meta}</div></li>`;
+}
+async function loadTicker() {
+  try {
+    const d = await api("/api/ticker");
+    const fresh = (x) => tickerSeen.size && !tickerSeen.has(x.title);
+    $("#tk-uk").innerHTML = d.uk.length ? d.uk.map((x) => tickerItem(x, true, fresh(x))).join("") : '<li class="ldr">no data yet — still syncing</li>';
+    $("#tk-region").textContent = d.region || "your region";
+    $("#tk-reg").innerHTML = !d.region
+      ? '<li class="ldr">Choose a region in the header to see its latest incidents here.</li>'
+      : d.regional.length ? d.regional.map((x) => tickerItem(x, false, fresh(x))).join("") : `<li class="ldr">No placed incidents in ${esc(d.region)} yet.</li>`;
+    tickerSeen = new Set([...d.uk, ...d.regional].map((x) => x.title));
+    $("#tk-updated").textContent = d.updated ? `data ${ago(d.updated)}` : "";
+  } catch (e) { /* keep what is on screen */ }
+}
+// re-read the server cache each minute while the tab is visible, so a refresh done by anyone shows up
+setInterval(() => { if (document.visibilityState === "visible" && activeTab() === "overview") loadTicker(); }, 60000);
 
 // ------------------------------------------------------------------ overview
 async function loadOverview() {
   const holder = $("#stat-cards");
-  const [y, g, s] = ["chart-year", "chart-gangs", "chart-sectors"].map((i) => $(`#${i}`));
+  const [y, g, s, rg] = ["chart-year", "chart-gangs", "chart-sectors", "chart-regions"].map((i) => $(`#${i}`));
   y.innerHTML = g.innerHTML = s.innerHTML = '<div class="ldr">loading…</div>';
   try {
-    const d = await api("/api/summary");
+    const d = await api(`/api/summary?${rq()}`);
     holder.innerHTML = [
-      ["UK victims", d.uk_total],
-      ["West Midlands", d.wm_total, "hl"],
-      ["GB attacks", d.attacks_total],
-      ["Gangs tracked", d.gangs_total],
-    ]
-      .map(([label, num, cls]) => `<div class="stat ${cls || ""}"><div class="num">${num ?? 0}</div><div class="label">${label}</div></div>`)
-      .join("");
+      [region ? `${region} victims` : "UK victims", d.uk_total, region ? "hl" : ""],
+      ["UK victims (all regions)", d.uk_all, ""],
+      ["Recent attacks tracked", d.attacks_total, ""],
+      ["Gangs tracked", d.gangs_total, ""],
+    ].map(([label, num, cls]) => `<div class="stat ${cls}"><div class="num">${num ?? 0}</div><div class="label">${label}</div></div>`).join("");
     drawBars(y, d.by_year.map((r) => [r.year, r.count]));
     drawBars(g, d.top_gangs.map((r) => [r.group, r.count]));
     drawBars(s, d.top_sectors.map((r) => [r.sector, r.count]));
+    const rows = d.by_region.filter((r) => r.count > 0).map((r) => [r.region, r.count, +(100 * r.count / d.uk_all).toFixed(1)]);
+    drawBars(rg, rows);
+    rg.querySelectorAll(".bar-row").forEach((row, i) => {
+      row.classList.add("pick");
+      row.title = "Filter the dashboard to this region";
+      row.addEventListener("click", () => { $("#region").value = rows[i][0]; $("#region").dispatchEvent(new Event("change")); });
+    });
+    const p = d.placement;
+    $("#region-note").innerHTML = `<strong>${p.placed}</strong> of ${p.total} victims placed (${p.from_text} from place names, ${p.from_postcode} postcodes, ${p.from_companies_house} Companies House). ` +
+      `${p.unplaced} unplaced. ${p.api_enabled ? "" : "Companies House lookup is off: set COMPANIES_HOUSE_KEY. "}${p.running ? "<em>Looking up regions now…</em>" : ""}`;
   } catch (e) {
     holder.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
   }
@@ -89,205 +142,140 @@ async function loadOverview() {
 function drawBars(holder, rows) {
   const max = Math.max(1, ...rows.map((r) => r[1]));
   holder.innerHTML = rows.length
-    ? rows
-        .map(([k, v, share]) => `
+    ? rows.map(([k, v, share]) => `
         <div class="bar-row">
           <div class="bk" title="${esc(k)}">${esc(k)}</div>
           <div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, (v / max) * 100)}%"></div></div>
           <div class="bv">${v}${share != null ? ` <span class="fine">${share}%</span>` : ""}</div>
-        </div>`)
-        .join("")
-    : '<div class="ldr">no data yet — still syncing</div>';
+        </div>`).join("")
+    : '<div class="ldr">no data for this selection</div>';
 }
 
+// ------------------------------------------------------------------ modal
 const modal = document.getElementById("modal");
 let modalKind = "sector";
-
-let modalBackFn = null;   // set by the Breaches sector drill-down; null means the default Back action
-function openModal() {
-  modalBackFn = null;
-  modal.hidden = false;
-}
-
+function openModal() { modal.hidden = false; }
 function closeModal() {
   modal.hidden = true;
-  document.getElementById("modal-back").hidden = true;
+  $("#modal-back").hidden = true;
   document.querySelectorAll(".more[data-detail]").forEach((b) => b.classList.remove("on"));
 }
-
 async function showBreakdown(kind) {
   modalKind = kind;
   openModal();
-  document.getElementById("modal-back").hidden = true;
-  document.getElementById("modal-title").textContent = "Loading…";
-  document.getElementById("modal-explain").textContent = "";
-  const body = document.getElementById("modal-body");
-  body.innerHTML = '<div class="ldr">loading…</div>';
-  const d = await api(`/api/summary/detail?kind=${kind}`);
-  document.getElementById("modal-title").textContent = d.title;
-  document.getElementById("modal-explain").textContent = "Select a row for a closer breakdown.";
-  body.innerHTML = '<div class="bars"></div>';
-  drawBars(body.querySelector(".bars"), d.items.map((r) => [r.label, r.count, r.share]));
-  body.querySelectorAll(".bar-row").forEach((row, i) => {
+  track("modal_open", `breakdown ${kind}`);
+  $("#modal-back").hidden = true;
+  $("#modal-title").textContent = "Loading…";
+  $("#modal-explain").textContent = "";
+  $("#modal-body").innerHTML = '<div class="ldr">loading…</div>';
+  const d = await api(`/api/summary/detail?${rq({ kind })}`);
+  $("#modal-title").textContent = d.title;
+  $("#modal-explain").textContent = "Select a row for a closer breakdown.";
+  $("#modal-body").innerHTML = '<div class="bars"></div>';
+  drawBars($("#modal-body .bars"), d.items.map((r) => [r.label, r.count, r.share]));
+  $("#modal-body").querySelectorAll(".bar-row").forEach((row, i) => {
     row.classList.add("pick");
     row.addEventListener("click", () => showSlice(kind, d.items[i].label));
   });
 }
-
 async function showSlice(kind, label) {
   openModal();
-  document.getElementById("modal-back").hidden = false;
-  document.getElementById("modal-title").textContent = label;
-  document.getElementById("modal-explain").textContent = "Loading…";
-  const body = document.getElementById("modal-body");
+  $("#modal-back").hidden = false;
+  $("#modal-title").textContent = label;
+  $("#modal-explain").textContent = "Loading…";
+  const body = $("#modal-body");
   body.innerHTML = '<div class="ldr">loading…</div>';
-  const d = await api(`/api/summary/slice?kind=${encodeURIComponent(kind)}&label=${encodeURIComponent(label)}`);
-  document.getElementById("modal-title").textContent = d.label;
-  document.getElementById("modal-explain").textContent = `${d.explain} ${d.count} victims, ${d.share}% of the UK list.`;
-  const bars = document.createElement("div");
-  bars.className = "bars";
-  body.innerHTML = `<p class="hint">${esc(d.split_title)}</p>`;
-  body.appendChild(bars);
-  drawBars(bars, d.split.map((r) => [r.label, r.count]));
-  const list = document.createElement("div");
-  list.className = "slice-list";
-  list.innerHTML = d.victims.length
+  const d = await api(`/api/summary/slice?${rq({ kind, label })}`);
+  $("#modal-title").textContent = d.label;
+  $("#modal-explain").textContent = `${d.explain} ${d.count} victims, ${d.share}% of the current selection.`;
+  body.innerHTML = `<p class="hint">${esc(d.split_title)}</p><div class="bars"></div><div class="slice-list"></div>`;
+  drawBars(body.querySelector(".bars"), d.split.map((r) => [r.label, r.count]));
+  body.querySelector(".slice-list").innerHTML = d.victims.length
     ? d.victims.map((v) => `
       <div class="vc">
         <div class="name">${esc(v.post_title)}</div>
-        <div class="meta"><span class="badge grp">${esc(v.group || "unknown")}</span> · ${esc(v.activity || "sector unknown")} · ${fmtDate(v.discovered)}</div>
+        <div class="meta"><span class="badge grp">${esc(v.group || "unknown")}</span> · ${esc(v.activity)} · ${fmtDate(v.discovered)} · ${esc(v.rocu === "Unplaced" ? "region unknown" : v.rocu)}</div>
         ${v.website ? `<div class="meta">${esc(v.website)}</div>` : ""}
       </div>`).join("")
     : '<div class="ldr">no victims in this slice</div>';
-  body.appendChild(list);
 }
-
-document.getElementById("tab-overview").addEventListener("click", async (e) => {
+$("#tab-overview").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-detail]");
   if (!btn) return;
   document.querySelectorAll(".more[data-detail]").forEach((b) => b.classList.toggle("on", b === btn));
-  try {
-    await showBreakdown(btn.dataset.detail);
-  } catch (err) {
+  try { await showBreakdown(btn.dataset.detail); }
+  catch (err) {
     openModal();
-    document.getElementById("modal-title").textContent = "Breakdown";
-    document.getElementById("modal-explain").textContent = "";
-    document.getElementById("modal-body").innerHTML = `<div class="ldr">failed to load: ${esc(err.message)}</div>`;
+    $("#modal-title").textContent = "Breakdown";
+    $("#modal-body").innerHTML = `<div class="ldr">failed to load: ${esc(err.message)}</div>`;
   }
 });
-
-document.getElementById("modal-close").addEventListener("click", closeModal);
-document.getElementById("modal-back").addEventListener("click", () => (modalBackFn ? modalBackFn() : showBreakdown(modalKind)));
-modal.addEventListener("click", (e) => {
-  if (e.target === modal) closeModal();
-});
-
-// ------------------------------------------------------------------ west midlands
-async function loadWm() {
-  const list = $("#wm-list");
-  list.innerHTML = '<div class="ldr">loading…</div>';
-  try {
-    const d = await api("/api/victims?region=west_midlands&limit=200");
-    list.innerHTML = d.items.length
-      ? d.items
-          .map((v) => `
-        <div class="vc">
-          <div class="name">${esc(v.post_title)}</div>
-          <div class="meta"><span class="badge grp">${esc(v.group)}</span> · ${esc(v.activity || "sector unknown")}</div>
-          ${v.location ? `<div class="meta">Registered office: ${esc(v.location)}</div>` : ""}
-          ${v.maps_location ? `<div class="meta">Google Maps: ${esc(v.maps_location)}</div>` : ""}
-          ${v.registered_name ? `<div class="meta">${esc(v.registered_name)}</div>` : ""}
-          ${v.region_hits?.length ? `<div class="hits">Matched: ${v.region_hits.map((h) => `<span class="badge wm">${esc(h)}</span>`).join(" ")}</div>` : ""}
-          <div class="meta">Discovered: ${fmtDate(v.discovered)}</div>
-          <div class="links">
-            ${v.website ? `<a href="https://${esc(v.website)}" target="_blank" rel="noopener">website</a>` : ""}
-            ${v.post_url ? `<a href="${esc(v.post_url)}" target="_blank" rel="noopener" class="warn-link">leak site post</a>` : ""}
-          </div>
-        </div>`)
-          .join("")
-      : '<div class="ldr">no West Midlands matches found in current feed</div>';
-  } catch (e) {
-    list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
-  }
-}
+$("#modal-close").addEventListener("click", closeModal);
+$("#modal-back").addEventListener("click", () => showBreakdown(modalKind));
+modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.hidden) closeModal(); });
 
 // ------------------------------------------------------------------ victims
+const regionBadge = (v) => v.rocu === "Unplaced"
+  ? '<span class="badge src">region unknown</span>'
+  : `<span class="badge uk">${esc(v.rocu)}</span><div class="meta">${esc(v.force_name)}${v.region_source ? ` · by ${esc(v.region_source.replace("-", " "))}` : ""}</div>`;
 async function loadVictims() {
   const tbody = $("#victim-rows");
-  const q = $("#vq").value.trim();
-  const group = $("#vgroup").value;
-  const sector = $("#vsector").value;
+  const q = $("#vq").value.trim(), group = $("#vgroup").value, sector = $("#vsector").value;
   tbody.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>';
-  const params = new URLSearchParams({ limit: "200", offset: "0" });
-  if (q) params.set("q", q);
-  if (group) params.set("group", group);
-  if (sector) params.set("sector", sector);
+  const extra = { limit: "200", offset: "0" };
+  if (q) extra.q = q;
+  if (group) extra.group = group;
+  if (sector) extra.sector = sector;
   try {
-    const d = await api(`/api/victims?${params}`);
-    $("#vcount").textContent = `${d.total} UK victims (showing first 200)`;
+    const d = await api(`/api/victims?${rq(extra)}`);
+    $("#vcount").textContent = `${d.total} UK victims${region ? ` in ${region}` : ""} (showing first 200)`;
     fillFacets(d.facets);
     tbody.innerHTML = d.items.length
-      ? d.items
-          .map(
-            (v) => `
+      ? d.items.map((v) => `
         <tr>
-          <td>
-            <strong>${esc(v.post_title)}</strong>${v.ico ? ' <span class="badge src" title="Also appears in ICO breach cases">ICO</span>' : ""}
-            ${v.website ? `<div class="meta"><a href="https://${esc(v.website)}" target="_blank" rel="noopener">${esc(v.website)}</a></div>` : ""}
-          </td>
+          <td><strong>${esc(v.post_title)}</strong>
+            ${v.website ? `<div class="meta"><a href="https://${esc(v.website)}" target="_blank" rel="noopener noreferrer">${esc(v.website)}</a></div>` : ""}
+            ${v.registered_name ? `<div class="meta">${esc(v.registered_name)}</div>` : ""}</td>
           <td><span class="badge grp">${esc(v.group)}</span></td>
           <td>${esc(v.activity || "—")}</td>
           <td>${fmtDate(v.discovered)}</td>
-          <td>${v.region === "west_midlands" ? `<span class="badge wm">West Midlands</span>` : `<span class="badge uk">UK</span>`}</td>
-        </tr>`
-          )
-          .join("")
+          <td>${regionBadge(v)}</td>
+        </tr>`).join("")
       : '<tr><td colspan="5" class="ldr">no matches</td></tr>';
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" class="ldr">failed to load: ${esc(e.message)}</td></tr>`;
   }
 }
-
 let facetsFilled = false;
 function fillFacets(f) {
-  // the lists come from the full UK dataset, not just the page of 200 rows on screen
+  // the lists come from the full UK dataset, not just the 200 rows on screen
   if (facetsFilled || !f) return;
-  $("#vgroup").innerHTML = `<option value="">All groups</option>` + f.groups.map((g) => `<option>${esc(g)}</option>`).join("");
-  $("#vsector").innerHTML = `<option value="">All sectors</option>` + f.sectors.map((s) => `<option>${esc(s)}</option>`).join("");
+  $("#vgroup").innerHTML = '<option value="">All groups</option>' + f.groups.map((g) => `<option>${esc(g)}</option>`).join("");
+  $("#vsector").innerHTML = '<option value="">All sectors</option>' + f.sectors.map((s) => `<option>${esc(s)}</option>`).join("");
   facetsFilled = true;
 }
 
-// ------------------------------------------------------------------ posts
+// ------------------------------------------------------------------ feed
 async function loadPosts() {
   const list = $("#post-list");
   const q = $("#pq").value.trim();
   list.innerHTML = '<div class="ldr">loading…</div>';
-  const params = new URLSearchParams({ limit: "250" });
-  if (q) params.set("q", q);
+  const extra = { limit: "250" };
+  if (q) extra.q = q;
   try {
-    const d = await api(`/api/posts?${params}`);
-    $("#pcount").textContent = `Aggregated feed (ransomware.live · ransomwatch · RansomLook) — showing ${d.items.length}`;
+    const d = await api(`/api/posts?${rq(extra)}`);
+    $("#pcount").textContent = `Aggregated feed (ransomware.live · RansomLook)${region ? ` — ${region} only` : ""} — showing ${d.items.length}`;
     list.innerHTML = d.items.length
-      ? d.items
-          .map(
-            (p) => `
+      ? d.items.map((p) => `
         <div class="post">
           <div>
-            <div class="ptitle">${esc(p.title)} ${p.region === "west_midlands" ? `<span class="badge wm">WM</span>` : ""}</div>
-            <div class="pdetail">
-              <span class="badge src">${esc(p.source)}</span>
-              <span class="badge grp">${esc(p.group || "unknown")}</span>
-              ${p.detail ? esc(p.detail) : ""}
-            </div>
+            <div class="ptitle">${esc(p.title)} ${p.rocu && p.rocu !== "Unplaced" ? `<span class="badge uk">${esc(p.rocu)}</span>` : ""}</div>
+            <div class="pdetail"><span class="badge src">${esc(p.source)}</span> <span class="badge grp">${esc(p.group || "unknown")}</span> ${p.detail ? esc(p.detail) : ""}</div>
           </div>
-          <div class="right">
-            <div class="pdate">${fmtDate(p.date)}</div>
-            ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">view→</a>` : ""}
-          </div>
-        </div>`
-          )
-          .join("")
-      : '<div class="ldr">no posts</div>';
+          <div class="right"><div class="pdate">${fmtDate(p.date)}</div>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">view→</a>` : ""}</div>
+        </div>`).join("")
+      : `<div class="ldr">${region ? `no recent posts matched to ${esc(region)}` : "no posts"}</div>`;
   } catch (e) {
     list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
   }
@@ -296,34 +284,26 @@ async function loadPosts() {
 // ------------------------------------------------------------------ gangs
 async function loadGangs() {
   const grid = $("#gang-grid");
-  const q = $("#gq").value.trim();
-  const source = $("#gsource").value;
-  const sort = $("#gsort").value;
+  const q = $("#gq").value.trim(), source = $("#gsource").value, sort = $("#gsort").value;
   const live = document.querySelector('input[name="glive"]:checked')?.value === "1";
   grid.innerHTML = '<div class="ldr">loading…</div>';
-  const params = new URLSearchParams();
-  if (q) params.set("q", q);
-  if (source) params.set("source", source);
-  if (sort && sort !== "name") params.set("sort", sort);
-  if (live) params.set("live", "1");
+  const extra = {};
+  if (q) extra.q = q;
+  if (source) extra.source = source;
+  if (sort && sort !== "name") extra.sort = sort;
+  if (live) extra.live = "1";
   try {
-    const d = await api(`/api/gangs?${params}`);
-    const rank = sort === "active" ? " · ranked by UK victim posts" : "";
-    const scope = live ? "with a live leak site" : "in catalog";
-    $("#gcount").textContent = `${d.total} entries ${scope} (gangs from ransomware.live + sources from deepdarkCTI)${rank}`;
+    const d = await api(`/api/gangs?${rq(extra)}`);
+    $("#gcount").textContent = `${d.total} entries ${live ? "with a live leak site" : "in catalog"}${sort === "active" ? ` · ranked by ${region || "UK"} victim posts` : ""}`;
     grid.innerHTML = d.items.length
-      ? d.items
-          .map((g) => {
-            const sites = (g.leak_sites || []).map((s, i) => {
-              const ok = s.available === true || s.status === "ONLINE";
-              const addr = s.slug || s.fqdn || "";
-              return `<div class="site-line"><span class="dot ${s.available === false || s.status === "OFFLINE" ? "bad" : ok ? "ok" : "na"}"></span>${addr ? `<button type="button" class="copy" data-copy="${esc(addr)}" title="Click to copy. Not opened from here."><span class="addr">${esc(addr)}</span><span class="cpy">copy</span></button>` : "site"}</div>`;
-            });
-            const meta = [
-              g.added_date ? `tracked since ${esc(g.added_date)}` : "",
-              g.activity ? `${g.activity} UK victim${g.activity === 1 ? "" : "s"}` : "",
-            ].filter(Boolean);
-            return `
+      ? d.items.map((g) => {
+          const sites = (g.leak_sites || []).map((s) => {
+            const ok = s.available === true || s.status === "ONLINE";
+            const addr = s.slug || s.fqdn || "";
+            return `<div class="site-line"><span class="dot ${s.available === false || s.status === "OFFLINE" ? "bad" : ok ? "ok" : "na"}"></span>${addr ? `<button type="button" class="copy" data-copy="${esc(addr)}" data-gang="${esc(g.name)}" title="Click to copy. Never opened from here."><span class="addr">${esc(addr)}</span><span class="cpy">copy</span></button>` : "site"}</div>`;
+          });
+          const meta = [g.added_date ? `tracked since ${esc(g.added_date)}` : "", g.activity ? `${g.activity} UK victim${g.activity === 1 ? "" : "s"}${region ? ` in ${esc(region)}` : ""}` : ""].filter(Boolean);
+          return `
         <div class="gc">
           <div class="gname">${esc(g.name)} ${(g.sources || []).map((s) => `<span class="badge src">${esc(s)}</span>`).join(" ")}</div>
           ${g.altname ? `<div class="meta"><span class="badge uk">${esc(g.altname)}</span></div>` : ""}
@@ -331,11 +311,37 @@ async function loadGangs() {
           ${sites.length ? `<div class="sites">${sites.join("")}</div>` : ""}
           <div class="meta">${meta.join(" · ")}</div>
         </div>`;
-          })
-          .join("")
+        }).join("")
       : '<div class="ldr">no gangs match these filters</div>';
   } catch (e) {
     grid.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+// ------------------------------------------------------------------ alerts & news
+async function loadAlerts() {
+  const list = $("#alert-list");
+  const q = $("#aq").value.trim(), source = $("#asource").value;
+  list.innerHTML = '<div class="ldr">loading…</div>';
+  const p = new URLSearchParams({ limit: "150" });
+  if (q) p.set("q", q);
+  if (source) p.set("source", source);
+  try {
+    const d = await api(`/api/intel?${p}`);
+    $("#acount").textContent = `${d.total} items (national: not filtered by region)`;
+    list.innerHTML = d.items.length
+      ? d.items.map((item) => `
+        <div class="post">
+          <div>
+            <div class="ptitle">${esc(item.title)}</div>
+            <div class="pdetail"><span class="badge src">${esc(item.source)}</span> <span class="badge grp">${esc(item.kind)}</span>
+              ${item.extra?.cve ? esc(item.extra.cve) + " " : ""}${item.extra?.vendor ? esc(item.extra.vendor) + " " : ""}${item.summary ? esc(item.summary.slice(0, 220)) : ""}</div>
+          </div>
+          <div class="right"><div class="pdate">${fmtDate(item.published)}</div>${item.url ? `<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">view→</a>` : ""}</div>
+        </div>`).join("")
+      : '<div class="ldr">no alerts yet — still syncing</div>';
+  } catch (e) {
+    list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
   }
 }
 
@@ -344,10 +350,10 @@ function toast(msg) {
   let t = $("#toast");
   if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
   t.textContent = msg; t.classList.add("on");
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), 1800);
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), 2200);
 }
 async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall back below */ }
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall back */ }
   const ta = document.createElement("textarea");
   ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
   document.body.appendChild(ta); ta.select();
@@ -364,324 +370,214 @@ document.addEventListener("click", async (e) => {
   if (ok) {
     b.classList.add("done"); if (label) label.textContent = "copied";
     toast("Copied to clipboard");
+    track("copy_leak_site", b.dataset.gang || "");
     setTimeout(() => { b.classList.remove("done"); if (label) label.textContent = "copy"; }, 1400);
-  } else {
-    toast("Copy failed: select the text manually");
-  }
+  } else toast("Copy failed: select the text manually");
 });
 
-// ------------------------------------------------------------------ breaches (ICO)
-let bForce = "";
-let bSub = "";
-let bFilled = false;
-function bParams(extra) {
-  const p = new URLSearchParams(extra || {});
-  if (document.querySelector('input[name="bcyber"]:checked')?.value === "1") p.set("cyber", "1");
-  const q = $("#bq").value.trim(), sec = $("#bsector").value, rocu = $("#brocu").value;
-  if (q) p.set("q", q);
-  if (sec) p.set("sector", sec);
-  if (rocu) p.set("rocu", rocu);
-  if (bForce) p.set("force", bForce);
-  if (bSub) p.set("subsector", bSub);
-  return p;
-}
-async function loadBreaches(quiet) {
-  const rows = $("#b-rows");
-  if (quiet !== true) rows.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>';
+// ------------------------------------------------------------------ admin: users
+const genPassword = () => {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789-_";
+  const a = new Uint32Array(18); crypto.getRandomValues(a);
+  return [...a].map((n) => chars[n % chars.length]).join("");
+};
+let userCache = [];
+async function loadUsers() {
+  const body = $("#user-rows");
+  body.innerHTML = '<tr><td colspan="7" class="ldr">loading…</td></tr>';
   try {
-    const [s, r, c, cmp] = await Promise.all([
-      api(`/api/breaches/summary?${bParams()}`),
-      api(`/api/breaches/regions?${bParams()}`),
-      api(`/api/breaches/cases?${bParams({ limit: "100" })}`),
-      api(`/api/compare/sectors?${bParams()}`),
-    ]);
-    if (!bFilled && c.sectors.length) {
-      $("#bsector").innerHTML = `<option value="">All sectors</option>` + c.sectors.map((x) => `<option>${esc(x)}</option>`).join("");
-      $("#brocu").innerHTML = `<option value="">All regions (ROCU)</option>` + c.rocus.map((x) => `<option>${esc(x)}</option>`).join("");
-      bFilled = true;
-    }
-    const cyberOnly = document.querySelector('input[name="bcyber"]:checked')?.value === "1";
-    $("#bnote").textContent = `${s.source_note} "Cyber incident" is the organisation's own answer, not an ICO finding.` + (bForce ? ` Force: ${bForce}.` : "") + (bSub ? ` Sub-sector: ${bSub}.` : "");
-    $("#bclear").hidden = !(bForce || bSub || $("#bsector").value || $("#brocu").value);
-    drawCompare(cmp);
-    $("#b-stats").innerHTML = [
-      [cyberOnly ? "Cyber incidents" : "Breach cases", s.total, ""],
-      [cyberOnly ? "of all cases" : "Flagged cyber", cyberOnly ? "" : `${s.cyber} (${s.cyber_share}%)`, ""],
-      ["Organisations", s.orgs, ""],
-      ["Also a ransomware victim", s.also_ransomware, "hl"],
-    ].filter((x) => x[1] !== "").map(([l, n, cls]) => `<div class="stat ${cls}"><div class="num">${n}</div><div class="label">${l}</div></div>`).join("");
-    drawBars($("#b-quarter"), s.by_quarter.map((x) => [x.quarter, x.count]));
-    drawBars($("#b-sectors"), s.top_sectors.map((x) => [x.sector, x.count]));
-    // regions: ROCU > police force > organisations
-    const shown = r.rocus.filter((x) => x.count > 0);
-    const regionRows = shown.map((x) => [x.rocu, x.count, x.share]);
-    if (r.unplaced) regionRows.push(["Unplaced", r.unplaced, +(100 - r.coverage).toFixed(1)]);
-    drawBars($("#b-regions"), regionRows);
-    const L = r.lookups;
-    $("#b-cover").innerHTML = !r.enabled
-      ? "Regional placement is off: set COMPANIES_HOUSE_KEY."
-      : `<strong>${r.coverage}%</strong> of these cases placed (${r.placed} of ${r.total}). Click a region to see its forces.` +
-        `<div class="lookup"><div class="bar-track"><div class="bar-fill ico" style="width:${Math.max(1, L.progress)}%"></div></div>` +
-        `<span><strong>${L.orgs_looked_up.toLocaleString()}</strong> of ${L.orgs_total.toLocaleString()} organisations looked up (${L.progress}%) · ${L.orgs_placed.toLocaleString()} placed · ${L.orgs_remaining.toLocaleString()} to go` +
-        `${r.placing ? ' · <em>looking up now…</em>' : ""}</span></div>`;
-    $("#b-regions").querySelectorAll(".bar-row").forEach((row, i) => {
-      const name = regionRows[i][0];
-      row.classList.add("pick");
-      row.addEventListener("click", () => (name === "Unplaced" ? setRegion("Unplaced", "") : showRocu(name, shown.find((x) => x.rocu === name))));
-    });
-    $("#bcount").textContent = `${c.total} cases (showing first ${c.items.length}). Source: ICO personal data breach cases, Open Government Licence v3.0.`;
-    rows.innerHTML = c.items.length
-      ? c.items.map((x) => `
-        <tr>
-          <td><strong>${esc(x.org || "—")}</strong>${x.ransomware_group ? ` <span class="badge wm" title="Also listed as a ransomware victim">ransomware: ${esc(x.ransomware_group)}</span>` : ""}
-            <div class="meta">${esc(x.ref)}${x.subsector ? " · " + esc(x.subsector) : ""}</div></td>
-          <td>${esc(x.sector)}</td>
-          <td>${x.cyber ? '<span class="badge wm">cyber</span>' : `<span class="badge uk">${esc(x.cyber_flag)}</span>`}</td>
-          <td>${esc(x.completed || "—")}</td>
-          <td>${x.rocu ? `${esc(x.rocu)}<div class="meta">${esc(x.force_name)}</div>` : '<span class="meta">unplaced</span>'}</td>
-        </tr>`).join("")
-      : '<tr><td colspan="5" class="ldr">no cases — still syncing, or no matches</td></tr>';
+    const d = await api("/api/admin/users");
+    userCache = d.users;
+    const regionOpts = (sel) => '<option value="">All UK</option>' + d.regions.map((r) => `<option ${r === sel ? "selected" : ""}>${esc(r)}</option>`).join("");
+    if ($("#u-region").options.length <= 1) $("#u-region").innerHTML = regionOpts("");
+    body.innerHTML = d.users.map((u) => `
+      <tr data-id="${u.id}">
+        <td><strong>${esc(u.username)}</strong>${u.username === ME.username ? ' <span class="badge src">you</span>' : ""}<div class="meta">created ${fmtDate(u.created_at)}${u.created_by ? ` by ${esc(u.created_by)}` : ""}</div></td>
+        <td><span class="badge ${u.role === "admin" ? "wm" : "uk"}">${esc(u.role)}</span></td>
+        <td><select class="search u-reg" data-id="${u.id}" aria-label="Region for ${esc(u.username)}">${regionOpts(u.region)}</select></td>
+        <td>${u.active ? '<span class="badge on">active</span>' : '<span class="badge off">disabled</span>'}</td>
+        <td>${u.last_login ? fmtTime(u.last_login) : '<span class="meta">never</span>'}</td>
+        <td>${u.events}</td>
+        <td class="actions">
+          <button class="more" data-act="pw" data-id="${u.id}">Reset password</button>
+          <button class="more" data-act="role" data-id="${u.id}">${u.role === "admin" ? "Make user" : "Make admin"}</button>
+          <button class="more" data-act="active" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>
+          <button class="more danger" data-act="del" data-id="${u.id}">Delete</button>
+        </td>
+      </tr>`).join("");
   } catch (e) {
-    rows.innerHTML = `<tr><td colspan="5" class="ldr">failed to load: ${esc(e.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="ldr">${esc(e.message)}</td></tr>`;
   }
 }
-function drawCompare(c) {
-  $("#b-cmp-note").textContent = `${c.note} ICO: ${c.ico_total} cases. Ransomware: ${c.rw_total} UK victims. Bars show each source's share of its own total.`;
-  const max = Math.max(1, ...c.rows.map((r) => Math.max(r.ico_share, r.rw_share)));
-  $("#b-compare").innerHTML = c.rows.map((r) => `
-    <div class="cmp-row">
-      <div class="bk" title="${esc(r.sector)}">${esc(r.sector)}</div>
-      <div class="cmp-bars">
-        <div class="cmp-line"><div class="bar-track"><div class="bar-fill ico" style="width:${Math.max(1, (r.ico_share / max) * 100)}%"></div></div><span class="bv">${r.ico_share}%</span></div>
-        <div class="cmp-line"><div class="bar-track"><div class="bar-fill rw" style="width:${Math.max(1, (r.rw_share / max) * 100)}%"></div></div><span class="bv">${r.rw_share}%</span></div>
-      </div>
-    </div>`).join("");
-}
-async function showBSectors() {
-  openModal();
-  $("#modal-back").hidden = true;
-  $("#modal-title").textContent = "Breaches by sector";
-  $("#modal-explain").textContent = "Select a sector for its sub-sector breakdown.";
-  const body = $("#modal-body");
-  body.innerHTML = '<div class="ldr">loading…</div>';
+$("#u-gen").addEventListener("click", () => { $("#u-pass").value = genPassword(); });
+$("#uform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#u-msg");
   try {
-    const d = await api(`/api/breaches/sectors?${bParams()}`);
-    body.innerHTML = '<div class="bars"></div>';
-    drawBars(body.querySelector(".bars"), d.items.map((r) => [r.label, r.count, r.share]));
-    body.querySelectorAll(".bar-row").forEach((row, i) => {
-      row.classList.add("pick");
-      row.addEventListener("click", () => showBSub(d.items[i].label));
-    });
-  } catch (e) { body.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
-}
-async function showBSub(sector) {
-  openModal();
-  const back = $("#modal-back");
-  back.hidden = false;
-  modalBackFn = showBSectors;
-  $("#modal-title").textContent = sector;
-  $("#modal-explain").textContent = "Sub-sectors. Select one to filter the case list, or filter by the whole sector.";
-  const body = $("#modal-body");
-  body.innerHTML = '<div class="ldr">loading…</div>';
-  try {
-    const d = await api(`/api/breaches/sectors?${bParams({ sector })}`);
-    body.innerHTML = `<p class="hint">${d.total} cases, ${d.share}% of the current selection. <button class="more" type="button" id="sec-all">Filter to whole sector</button></p><div class="bars"></div>`;
-    drawBars(body.querySelector(".bars"), d.items.map((r) => [r.label, r.count, r.share]));
-    body.querySelectorAll(".bar-row").forEach((row, i) => {
-      row.classList.add("pick");
-      row.addEventListener("click", () => setSector(sector, d.items[i].label === "Not stated" ? "" : d.items[i].label));
-    });
-    $("#sec-all").addEventListener("click", () => setSector(sector, ""));
-  } catch (e) { body.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
-}
-function setSector(sector, sub) {
-  $("#bsector").value = sector;
-  bSub = sub || "";
-  closeModal();
-  loadBreaches();
-}
-function setRegion(rocu, force) {
-  bForce = force || "";
-  $("#brocu").value = rocu;
-  closeModal();
-  loadBreaches();
-}
-function showRocu(rocu, data) {
-  openModal();
-  $("#modal-back").hidden = true;
-  $("#modal-title").textContent = `${rocu} ROCU`;
-  $("#modal-explain").textContent = "Police forces in this region. Select a force to filter the case list.";
-  const body = $("#modal-body");
-  body.innerHTML = '<div class="bars"></div><p class="hint"><button class="more" type="button" id="rocu-all">Show whole region</button></p>';
-  const forces = (data && data.forces) || [];
-  drawBars(body.querySelector(".bars"), forces.map((f) => [f.name, f.count]));
-  body.querySelectorAll(".bar-row").forEach((row, i) => {
-    row.classList.add("pick");
-    row.addEventListener("click", () => setRegion(rocu, forces[i].force));
-  });
-  $("#rocu-all").addEventListener("click", () => setRegion(rocu, ""));
-}
-["bq"].forEach((id) => $(`#${id}`).addEventListener("input", debounce(loadBreaches, 300)));
-$("#bsector").addEventListener("change", () => { bSub = ""; loadBreaches(); });
-$("#b-sectors-more").addEventListener("click", showBSectors);
-$("#bclear").addEventListener("click", () => { bForce = ""; bSub = ""; $("#bsector").value = ""; $("#brocu").value = ""; loadBreaches(); });
-$("#brocu").addEventListener("change", () => { bForce = ""; loadBreaches(); });
-document.querySelectorAll('input[name="bcyber"]').forEach((el) => el.addEventListener("change", loadBreaches));
-$("#brefresh").addEventListener("click", loadBreaches);
-
-// ------------------------------------------------------------------ wiring
-["vq", "vgroup", "vsector"].forEach((id) => {
-  const el = $(`#${id}`);
-  el.addEventListener(el.tagName === "INPUT" ? "input" : "change", debounce(loadVictims, 300));
+    const name = $("#u-name").value.trim(), pw = $("#u-pass").value;
+    await api("/api/admin/users", { method: "POST", body: { username: name, password: pw, role: $("#u-role").value, region: $("#u-region").value } });
+    msg.innerHTML = `Created <strong>${esc(name)}</strong>. Give them this password now (it cannot be shown again): <code>${esc(pw)}</code>`;
+    $("#u-name").value = ""; $("#u-pass").value = "";
+    loadUsers();
+  } catch (err) { msg.textContent = err.message; }
 });
-["pq"].forEach((id) => $(`#${id}`).addEventListener("input", debounce(loadPosts, 300)));
-["gq"].forEach((id) => $(`#${id}`).addEventListener("input", debounce(loadGangs, 300)));
-$("#gsource").addEventListener("change", loadGangs);
-$("#gsort").addEventListener("change", loadGangs);
-document.querySelectorAll('input[name="glive"]').forEach((el) => el.addEventListener("change", loadGangs));
+$("#user-rows").addEventListener("change", async (e) => {
+  const sel = e.target.closest(".u-reg");
+  if (!sel) return;
+  try { await api(`/api/admin/users/${sel.dataset.id}`, { method: "PATCH", body: { region: sel.value } }); toast("Region saved"); }
+  catch (err) { toast(err.message); loadUsers(); }
+});
+$("#user-rows").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const u = userCache.find((x) => String(x.id) === b.dataset.id);
+  const patch = (body) => api(`/api/admin/users/${u.id}`, { method: "PATCH", body }).then(loadUsers).catch((err) => toast(err.message));
+  if (b.dataset.act === "role") patch({ role: u.role === "admin" ? "user" : "admin" });
+  else if (b.dataset.act === "active") patch({ active: !u.active });
+  else if (b.dataset.act === "del") {
+    if (confirm(`Delete ${u.username}? Their past activity stays in the log.`)) {
+      api(`/api/admin/users/${u.id}`, { method: "DELETE" }).then(loadUsers).catch((err) => toast(err.message));
+    }
+  } else if (b.dataset.act === "pw") passwordDialog(u);
+});
+function passwordDialog(u) {
+  openModal();
+  $("#modal-back").hidden = true;
+  $("#modal-title").textContent = `Reset password: ${u.username}`;
+  $("#modal-explain").textContent = "Sets a new password and signs them out everywhere. Tell them the new password yourself.";
+  $("#modal-body").innerHTML = `<form id="pwform" class="form-row"><label class="field">New password (10+ characters)
+    <span class="pw"><input id="np" class="search" type="text" minlength="10" required autocomplete="new-password"><button type="button" class="more" id="npg">Generate</button></span></label>
+    <button class="btn" type="submit">Save</button></form><p id="pwmsg" class="hint"></p>`;
+  $("#npg").addEventListener("click", () => { $("#np").value = genPassword(); });
+  $("#pwform").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const pw = $("#np").value;
+    try {
+      await api(`/api/admin/users/${u.id}`, { method: "PATCH", body: { password: pw } });
+      $("#pwmsg").innerHTML = `Saved. New password for <strong>${esc(u.username)}</strong>: <code>${esc(pw)}</code>`;
+      loadUsers();
+    } catch (err) { $("#pwmsg").textContent = err.message; }
+  });
+}
+
+// ------------------------------------------------------------------ admin: activity
+let actOffset = 0;
+const actParams = (extra = {}) => {
+  const p = new URLSearchParams(extra);
+  if ($("#act-user").value) p.set("user", $("#act-user").value);
+  if ($("#act-event").value) p.set("event", $("#act-event").value);
+  if ($("#act-q").value.trim()) p.set("q", $("#act-q").value.trim());
+  return p;
+};
+async function loadActivity(more) {
+  const body = $("#act-rows");
+  if (more !== true) { actOffset = 0; body.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>'; }
+  try {
+    const d = await api(`/api/admin/activity?${actParams({ limit: "100", offset: String(actOffset) })}`);
+    if ($("#act-user").options.length <= 1) {
+      $("#act-user").innerHTML = '<option value="">All users</option>' + d.users.map((u) => `<option>${esc(u)}</option>`).join("");
+      $("#act-event").innerHTML = '<option value="">All events</option>' + d.events.map((u) => `<option>${esc(u)}</option>`).join("");
+    }
+    const rows = d.items.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td>${esc(r.username || "—")}</td><td><span class="badge ${/failed|delete|locked/.test(r.event + r.detail) ? "off" : "src"}">${esc(r.event)}</span></td><td>${esc(r.detail)}</td><td class="meta">${esc(r.ip)}</td></tr>`).join("");
+    body.innerHTML = (more === true ? body.innerHTML : "") + (rows || '<tr><td colspan="5" class="ldr">no activity matches</td></tr>');
+    actOffset += d.items.length;
+    $("#act-count").textContent = `${d.total} events (showing ${actOffset})`;
+    $("#act-more").hidden = actOffset >= d.total;
+    $("#act-csv").href = `/api/admin/activity.csv?${actParams()}`;
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="5" class="ldr">${esc(e.message)}</td></tr>`;
+  }
+}
+$("#act-refresh").addEventListener("click", () => loadActivity());
+$("#act-more").addEventListener("click", () => loadActivity(true));
+["act-user", "act-event"].forEach((id) => $(`#${id}`).addEventListener("change", () => loadActivity()));
+$("#act-q").addEventListener("input", debounce(() => loadActivity(), 350));
+
+// ------------------------------------------------------------------ account
+$("#usermenu").addEventListener("click", () => {
+  openModal();
+  $("#modal-back").hidden = true;
+  $("#modal-title").textContent = ME.username;
+  $("#modal-explain").textContent = `${ME.role === "admin" ? "Administrator" : "User"} · ${ME.database ? "activity is logged" : "database not connected"}`;
+  $("#modal-body").innerHTML = ME.database ? `<h3 class="sub">Change password</h3>
+    <form id="mypw" class="form-row">
+      <label class="field">Current password<input id="pw-cur" class="search" type="password" required autocomplete="current-password"></label>
+      <label class="field">New password (10+ characters)<input id="pw-new" class="search" type="password" minlength="10" required autocomplete="new-password"></label>
+      <label class="field">Repeat new password<input id="pw-rep" class="search" type="password" minlength="10" required autocomplete="new-password"></label>
+      <button class="btn" type="submit">Change password</button></form><p id="mypw-msg" class="hint"></p>`
+    : '<p class="hint">The user database is not connected, so accounts and passwords are unavailable. Set DATABASE_URL.</p>';
+  const f = $("#mypw");
+  if (f) f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if ($("#pw-new").value !== $("#pw-rep").value) { $("#mypw-msg").textContent = "The new passwords do not match."; return; }
+    try {
+      await api("/api/me/password", { method: "POST", body: { current: $("#pw-cur").value, new: $("#pw-new").value } });
+      $("#mypw-msg").textContent = "Password changed.";
+      f.reset();
+    } catch (err) { $("#mypw-msg").textContent = err.message; }
+  });
+});
+
+// ------------------------------------------------------------------ search / filter wiring (with activity tracking)
+const trackedSearch = (id, label, fn) => $(`#${id}`).addEventListener("input", debounce(() => {
+  fn();
+  const v = $(`#${id}`).value.trim();
+  if (v) track("search", `${label}: ${v}`);
+}, 400));
+trackedSearch("vq", "victims", loadVictims);
+trackedSearch("pq", "feed", loadPosts);
+trackedSearch("gq", "gangs", loadGangs);
+trackedSearch("aq", "alerts", loadAlerts);
+[["vgroup", "victims group", loadVictims], ["vsector", "victims sector", loadVictims], ["gsource", "gangs source", loadGangs],
+ ["gsort", "gangs sort", loadGangs], ["asource", "alerts source", loadAlerts]].forEach(([id, label, fn]) =>
+  $(`#${id}`).addEventListener("change", () => { fn(); track("filter", `${label}: ${$(`#${id}`).value || "all"}`); }));
+document.querySelectorAll('input[name="glive"]').forEach((el) => el.addEventListener("change", () => { loadGangs(); track("filter", `gangs live only: ${el.value === "1"}`); }));
 $("#vrefresh").addEventListener("click", loadVictims);
 $("#prefresh").addEventListener("click", loadPosts);
 $("#grefresh").addEventListener("click", loadGangs);
-
-async function loadAlerts() {
-  const list = $("#alert-list");
-  const q = $("#aq").value.trim();
-  const source = $("#asource").value;
-  list.innerHTML = '<div class="ldr">loading…</div>';
-  const params = new URLSearchParams({ limit: "120" });
-  if (q) params.set("q", q);
-  if (source) params.set("source", source);
-  try {
-    const d = await api(`/api/intel?${params}`);
-    const keys = d.keys || {};
-    $("#acount").textContent = `${d.total} items. Companies House API ${keys.companies_house ? "on" : "off"}`;
-    list.innerHTML = d.items.length
-      ? d.items.map((item) => `
-        <div class="post">
-          <div>
-            <div class="ptitle">${esc(item.title)}</div>
-            <div class="pdetail">
-              <span class="badge src">${esc(item.source)}</span>
-              <span class="badge grp">${esc(item.kind)}</span>
-              ${item.extra?.cve ? esc(item.extra.cve) + " " : ""}
-              ${item.extra?.vendor ? esc(item.extra.vendor) + " " : ""}
-              ${item.summary ? esc(item.summary.slice(0, 220)) : ""}
-            </div>
-          </div>
-          <div class="right">
-            <div class="pdate">${fmtDate(item.published)}</div>
-            ${item.url ? `<a href="${esc(item.url)}" target="_blank" rel="noopener">view→</a>` : ""}
-          </div>
-        </div>`).join("")
-      : '<div class="ldr">no alerts yet — still syncing</div>';
-  } catch (e) {
-    list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
-  }
-}
-["aq"].forEach((id) => $(`#${id}`).addEventListener("input", debounce(loadAlerts, 300)));
-$("#asource").addEventListener("change", loadAlerts);
 $("#arefresh").addEventListener("click", loadAlerts);
 
-function debounce(fn, ms) {
-  let t;
-  return (...a) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...a), ms);
-  };
-}
-
+// ------------------------------------------------------------------ keep-screen-on toggle
 (function () {
-  const btn = document.getElementById("awake");
+  const btn = $("#awake");
   let lock = null;
-  let want = localStorage.getItem("evileye-awake") === "1";
-
+  let want = false;
+  try { want = localStorage.getItem("evileye-awake") === "1"; } catch (e) { /* storage unavailable */ }
+  const store = (on) => { try { on ? localStorage.setItem("evileye-awake", "1") : localStorage.removeItem("evileye-awake"); } catch (e) { /* ignore */ } };
   function paint() {
     btn.classList.toggle("on", want && !!lock);
     btn.setAttribute("aria-pressed", want && lock ? "true" : "false");
     btn.querySelector(".awake-label").textContent = want && lock ? "Screen kept on" : "Keep screen on";
   }
-
   async function acquire() {
-    if (!navigator.wakeLock) {
-      btn.title = "This browser cannot keep the screen awake.";
-      want = false;
-      localStorage.removeItem("evileye-awake");
-      paint();
-      return;
-    }
+    if (!navigator.wakeLock) { btn.title = "This browser cannot keep the screen awake."; want = false; store(false); paint(); return; }
     try {
       lock = await navigator.wakeLock.request("screen");
-      lock.addEventListener("release", () => {
-        lock = null;
-        paint();
-      });
-    } catch (err) {
-      lock = null;
-      btn.title = err.message || "Wake lock was denied.";
-    }
+      lock.addEventListener("release", () => { lock = null; paint(); });
+    } catch (err) { lock = null; btn.title = err.message || "Wake lock was denied."; }
     paint();
   }
-
   async function setAwake(on) {
-    want = on;
-    if (on) localStorage.setItem("evileye-awake", "1");
-    else localStorage.removeItem("evileye-awake");
-    if (!on && lock) {
-      await lock.release();
-      lock = null;
-    }
-    if (on) await acquire();
-    else paint();
+    want = on; store(on);
+    if (!on && lock) { await lock.release(); lock = null; }
+    if (on) await acquire(); else paint();
   }
-
   btn.addEventListener("click", () => setAwake(!(want && lock)));
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && want) acquire();
-  });
-  if (want) acquire();
-  else paint();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && want) acquire(); });
+  if (want) acquire(); else paint();
 })();
 
-document.getElementById("refresh-now").addEventListener("click", async () => {
-  const btn = document.getElementById("refresh-now");
-  btn.disabled = true;
-  btn.textContent = "Refreshing";
-  try {
-    await fetch("/api/refresh", { method: "POST" });
-  } catch (err) {
-    btn.title = err.message || "Refresh failed";
-  }
-  await waitForRefresh();
-  btn.disabled = false;
-  btn.textContent = "Refresh";
-  refreshCurrent();
-  trackPlacing();
-});
-
-// Refresh policy: the server fetches feeds only when the page is opened (if its data
-// is stale) or when Refresh is pressed. Nothing polls in the background.
-async function onOpen() {
-  try {
-    const r = await fetch("/api/open", { method: "POST" });
-    if (r.status === 401) { location.href = "/login"; return; }
-    const o = await r.json();
-    if (o.refreshing) await waitForRefresh();
-  } catch (e) { /* offline: show cached data */ }
-  await loadHealth();
-  refreshCurrent();
-  trackPlacing();
-}
+// ------------------------------------------------------------------ refresh policy
+// External feeds are fetched by the server only when the page is opened (if stale) or Refresh is pressed.
 async function waitForRefresh() {
-  // short-lived check, only while a refresh we asked for is running
   for (let i = 0; i < 40; i++) {
-    await loadHealth();
-    if (!$("#last-updated").textContent.includes("refreshing")) return;
+    const h = await loadHealth();
+    if (!h.refreshing) return;
     await new Promise((res) => setTimeout(res, 3000));
   }
 }
-
-// Placement of ICO organisations runs on the server after an open or Refresh. While that one
-// job is running we re-read the Regions panel every 20s, then stop. No polling otherwise.
+// Region lookups run on the server after an open or Refresh. While that one job runs we re-read the
+// screen every 20s, then stop. No polling otherwise.
 let tracking = false;
 async function trackPlacing() {
   if (tracking) return;
@@ -689,15 +585,35 @@ async function trackPlacing() {
   try {
     await new Promise((res) => setTimeout(res, 2000));
     for (let i = 0; i < 60; i++) {
-      let placing = false;
-      try { const h = await api("/health"); placing = !!h.placing; } catch (e) { break; }
-      await loadHealth();
-      if (document.querySelector(".tab.active")?.dataset.tab === "breaches") await loadBreaches(true);
-      if (!placing) break;
+      const h = await loadHealth();
+      if (["overview", "victims", "posts"].includes(activeTab())) refreshCurrent();
+      loadTicker();
+      if (!h.placing) break;
       await new Promise((res) => setTimeout(res, 20000));
     }
   } finally { tracking = false; }
 }
-loadHealth();
-loadOverview();
-onOpen();
+$("#refresh-now").addEventListener("click", async () => {
+  const btn = $("#refresh-now");
+  btn.disabled = true; btn.textContent = "Refreshing";
+  try { await api("/api/refresh", { method: "POST" }); } catch (err) { btn.title = err.message || "Refresh failed"; }
+  await waitForRefresh();
+  btn.disabled = false; btn.textContent = "Refresh";
+  refreshCurrent(); loadTicker(); trackPlacing();
+});
+
+async function init() {
+  try { ME = await api("/api/me"); } catch (e) { return; }
+  region = ME.region || "";
+  buildRegionSelect();
+  $("#usermenu").textContent = ME.username;
+  if (ME.role === "admin" && ME.database) document.querySelectorAll(".admin-only").forEach((el) => { el.hidden = false; });
+  loadHealth(); loadOverview(); loadTicker();
+  try {
+    const o = await api("/api/open", { method: "POST" });
+    if (o.refreshing) await waitForRefresh();
+  } catch (e) { /* offline: show cached data */ }
+  await loadHealth();
+  refreshCurrent(); loadTicker(); trackPlacing();
+}
+init();

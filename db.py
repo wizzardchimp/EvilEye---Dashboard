@@ -1,0 +1,68 @@
+"""PostgreSQL access for users and the activity log.
+
+If DATABASE_URL is not set the app runs in legacy single-password mode (no user management).
+"""
+import os
+
+import psycopg
+from psycopg.rows import dict_row
+
+URL = os.environ.get("DATABASE_URL", "")
+
+SCHEMA = """
+create table if not exists users (
+    id            serial primary key,
+    username      text not null,
+    password_hash text not null,
+    role          text not null default 'user' check (role in ('admin', 'user')),
+    region        text not null default '',
+    active        boolean not null default true,
+    created_at    timestamptz not null default now(),
+    created_by    text not null default '',
+    last_login    timestamptz
+);
+create unique index if not exists users_username_lower on users (lower(username));
+
+create table if not exists activity (
+    id        bigserial primary key,
+    ts        timestamptz not null default now(),
+    user_id   integer references users (id) on delete set null,
+    username  text not null default '',
+    event     text not null,
+    detail    text not null default '',
+    ip        text not null default ''
+);
+create index if not exists activity_ts on activity (ts desc);
+create index if not exists activity_user on activity (lower(username), ts desc);
+create index if not exists activity_event on activity (event, ts desc);
+"""
+
+
+def enabled():
+    return bool(URL)
+
+
+def connect():
+    return psycopg.connect(URL, row_factory=dict_row, connect_timeout=8, autocommit=True)
+
+
+def init():
+    with connect() as c:
+        c.execute(SCHEMA)
+
+
+def one(sql, params=()):
+    with connect() as c:
+        return c.execute(sql, params).fetchone()
+
+
+def many(sql, params=()):
+    with connect() as c:
+        return c.execute(sql, params).fetchall()
+
+
+def run(sql, params=()):
+    """Execute a statement; returns the first row if it has a RETURNING clause, else None."""
+    with connect() as c:
+        cur = c.execute(sql, params)
+        return cur.fetchone() if cur.description else None

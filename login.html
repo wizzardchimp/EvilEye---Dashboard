@@ -17,16 +17,26 @@
       </div>
     </div>
     <form method="post" action="/login" class="login-form">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
       <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-      <p id="login-error" class="login-error" hidden>Incorrect password. Try again.</p>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="login-error" role="alert" hidden></p>
       <button class="btn" type="submit">Sign in</button>
     </form>
   </main>
   <script>
-    if (new URLSearchParams(location.search).has("error")) {
-      document.getElementById("login-error").hidden = false;
-      document.getElementById("password").select();
+    const MSG = {
+      "1": "Incorrect username or password.",
+      "2": "Too many failed attempts. Try again in 15 minutes.",
+      "3": "The user database is unavailable. Try again shortly."
+    };
+    const code = new URLSearchParams(location.search).get("error");
+    if (code) {
+      const el = document.getElementById("login-error");
+      el.textContent = MSG[code] || MSG["1"];
+      el.hidden = false;
+      document.getElementById("password").focus();
     }
   </script>
 </body>
