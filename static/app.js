@@ -16,6 +16,20 @@ function debounce(fn, ms) {
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
+// ------------------------------------------------------------------ theme: dark (default) or inverted light, remembered per browser
+const root = document.documentElement;
+function setTheme(t) {
+  if (t === "light") root.dataset.theme = "light"; else delete root.dataset.theme;
+  try { localStorage.setItem("evileye-theme", t); } catch (e) { /* storage unavailable */ }
+  const b = document.getElementById("theme");
+  if (b) {
+    b.setAttribute("aria-pressed", String(t === "light"));
+    b.title = t === "light" ? "Switch back to the dark theme" : "Invert colour scheme (light theme)";
+  }
+}
+document.getElementById("theme").addEventListener("click", () => setTheme(root.dataset.theme === "light" ? "dark" : "light"));
+setTheme(root.dataset.theme === "light" ? "light" : "dark");
+
 let ME = null;       // { username, role, region, database, regions }
 let region = "";     // selected ROCU region ("" = all UK); this is also the user's saved preference
 

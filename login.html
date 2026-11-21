@@ -4,15 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EvilEye · Sign in</title>
-  <link rel="icon" type="image/svg+xml" href="/static/angry-eye.svg">
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="login-page">
+  <button id="theme" class="more icon-btn theme-corner" type="button" title="Invert colour scheme (light theme)" aria-label="Invert colour scheme"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg></button>
   <main class="login-card">
     <div class="login-brand">
-      <span class="logo"><img src="/static/angry-eye.svg" width="32" height="32" alt="EvilEye"></span>
+      <span class="logo logo-lg"><img src="/static/logo.jpg" width="128" height="97" alt="EvilEye"></span>
       <div>
-        <h1>EvilEye</h1>
+        <h1 class="wordmark">Evil<span class="eye">Eye</span></h1>
         <p class="tagline">the private eye on the patch</p>
       </div>
     </div>
@@ -38,6 +41,11 @@
       el.hidden = false;
       document.getElementById("password").focus();
     }
+    document.getElementById("theme").addEventListener("click", () => {
+      const light = document.documentElement.dataset.theme !== "light";
+      if (light) document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme;
+      try { localStorage.setItem("evileye-theme", light ? "light" : "dark"); } catch (e) { /* ignore */ }
+    });
   </script>
 </body>
 </html>

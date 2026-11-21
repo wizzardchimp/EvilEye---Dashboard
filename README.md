@@ -63,3 +63,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 EVILEYE_PASSWORD=choose-one-long-password .venv/bin/python app.py     # legacy mode, http://localhost:8000
 ```
 Set `DATABASE_URL` to use real user accounts.
+
+## Look and feel
+The default theme is a slightly lightened dark. The contrast button in the header (and on the sign-in page) inverts it to a
+light theme; the choice is remembered per browser. All colours come from the tokens at the top of `static/style.css`.
+The logo is `static/logo.jpg` (shown on a dark tile so it works in both themes); the favicon is cropped from it.
