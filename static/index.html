@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=40">
+  <link rel="stylesheet" href="/static/style.css?v=42">
 </head>
 <body>
   <header class="topbar">
@@ -64,10 +64,12 @@
         <div class="ticker-col">
           <div class="ticker-head"><span class="live-dot"></span><h3>Latest UK incidents</h3><span id="tk-updated" class="meta"></span></div>
           <ul id="tk-uk" class="ticker-list"></ul>
+          <div id="tkf-uk" class="tk-foot" hidden><span class="meta"></span><span class="tk-btns"><button class="more" type="button" data-tk="uk" data-act="more" aria-controls="tk-uk">View more</button><button class="more" type="button" data-tk="uk" data-act="less" aria-controls="tk-uk" hidden>Show fewer</button></span></div>
         </div>
         <div class="ticker-col">
           <div class="ticker-head"><span class="live-dot"></span><h3>Latest in <span id="tk-region">your region</span></h3></div>
           <ul id="tk-reg" class="ticker-list"></ul>
+          <div id="tkf-reg" class="tk-foot" hidden><span class="meta"></span><span class="tk-btns"><button class="more" type="button" data-tk="reg" data-act="more" aria-controls="tk-reg">View more</button><button class="more" type="button" data-tk="reg" data-act="less" aria-controls="tk-reg" hidden>Show fewer</button></span></div>
         </div>
       </div>
       <div class="card news-top">
@@ -333,6 +335,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=42"></script>
+  <script src="/static/app.js?v=43"></script>
 </body>
 </html>

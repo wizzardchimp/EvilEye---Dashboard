@@ -109,7 +109,7 @@ function buildRegionSelect() {
 function applyRegionChange(save) {
   ME.region = save ? region : ME.region;
   facetsFilled = false; vm.page = 0;
-  updateFilterBar(); syncHash(); loadTicker(); refreshCurrent();
+  TK.reg.n = TK_FIRST; updateFilterBar(); syncHash(); loadTicker(); refreshCurrent();
 }
 $("#region").addEventListener("change", async () => {
   region = $("#region").value;
@@ -125,26 +125,56 @@ const newBadge = (v) => (v.new ? ' <span class="badge new">NEW</span>' : "");
 
 // ------------------------------------------------------------------ ticker (reads the server's cache; no external calls)
 let tickerSeen = new Set();
+const TK_FIRST = 5, TK_STEP = 25;
+const TK = { uk: { n: TK_FIRST, total: 0 }, reg: { n: TK_FIRST, total: 0 } };      // how many each list shows / holds
 const sectorShort = (s) => (s && s !== "Unclassified" ? s : "");
+// the victim's own website as an https link, or "" when the source gave none (or something that is not a web address)
+function siteHref(site) {
+  const s = (site || "").trim().replace(/^https?:\/\//i, "");
+  return isDomain(s) ? `https://${s}` : "";
+}
 function tickerItem(x, showRegion, fresh) {
   const meta = [`<span class="badge grp">${esc(x.group)}</span>`, esc(sectorShort(x.sector)), ago(x.seen)].filter(Boolean).join(" · ");
   const reg = showRegion ? `<span class="badge ${x.rocu === "Unplaced" ? "src" : "uk"}">${esc(x.rocu === "Unplaced" ? "region unknown" : x.rocu)}</span>` : "";
-  const t = x.town && placed(x) ? ` <span class="town">(${esc(x.town)})</span>` : "";
-  return `<li class="${fresh ? "fresh" : ""}"><div class="tk-title">${esc(x.title)}${t} ${reg}${x.new ? ' <span class="badge new">NEW</span>' : ""}</div><div class="meta">${meta}</div></li>`;
+  const href = siteHref(x.website);
+  const name = href ? `<a class="tk-name" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(href.slice(8))} (opens in a new tab)">${esc(x.title)}</a>` : esc(x.title);
+  const area = x.town && placed(x) ? `<span class="tk-area">${esc(x.town)}</span>` : "";
+  return `<li class="${fresh ? "fresh" : ""}"><div class="tk-main"><div class="tk-title">${name} ${reg}${x.new ? ' <span class="badge new">NEW</span>' : ""}</div><div class="meta">${meta}</div></div>${area}</li>`;
 }
-async function loadTicker() {
+function tickerFoot(which) {
+  const s = TK[which], foot = $("#tkf-" + which), shown = Math.min(s.n, s.total), expanded = s.n > TK_FIRST;
+  foot.hidden = s.total <= TK_FIRST;
+  foot.querySelector(".meta").textContent = `Showing ${shown} of ${s.total.toLocaleString("en-GB")}`;
+  const more = foot.querySelector('[data-act="more"]');
+  more.hidden = shown >= s.total;
+  more.textContent = expanded ? `Show ${Math.min(TK_STEP, s.total - shown)} more` : "View more";
+  foot.querySelector('[data-act="less"]').hidden = !expanded;
+  $("#tk-" + which).classList.toggle("expanded", expanded);
+}
+function setList(id, html) { const el = $(id), top = el.scrollTop; el.innerHTML = html; el.scrollTop = top; }      // keep the scroll position
+async function loadTicker(expanding = false) {
   try {
-    const d = await api("/api/ticker");
-    const fresh = (x) => tickerSeen.size && !tickerSeen.has(x.title);
-    $("#tk-uk").innerHTML = d.uk.length ? d.uk.map((x) => tickerItem(x, true, fresh(x))).join("") : '<li class="ldr">no data yet — still syncing</li>';
+    const d = await api(`/api/ticker?uk=${TK.uk.n}&reg=${TK.reg.n}`);
+    // flash only genuinely new entries among the first few, not rows revealed by "View more"
+    const fresh = (x, i) => !expanding && i < TK_FIRST && tickerSeen.size && !tickerSeen.has(x.title);
+    TK.uk.total = d.uk_total; TK.reg.total = d.regional_total;
+    setList("#tk-uk", d.uk.length ? d.uk.map((x, i) => tickerItem(x, true, fresh(x, i))).join("") : '<li class="ldr">no data yet — still syncing</li>');
     $("#tk-region").textContent = d.region || "your region";
-    $("#tk-reg").innerHTML = !d.region
+    setList("#tk-reg", !d.region
       ? '<li class="ldr">Choose a region in the header to see its latest incidents here.</li>'
-      : d.regional.length ? d.regional.map((x) => tickerItem(x, false, fresh(x))).join("") : `<li class="ldr">No placed incidents in ${esc(d.region)} yet.</li>`;
+      : d.regional.length ? d.regional.map((x, i) => tickerItem(x, false, fresh(x, i))).join("") : `<li class="ldr">No placed incidents in ${esc(d.region)} yet.</li>`);
     tickerSeen = new Set([...d.uk, ...d.regional].map((x) => x.title));
+    tickerFoot("uk"); tickerFoot("reg");
     $("#tk-updated").textContent = d.updated ? `data ${ago(d.updated)}` : "";
   } catch (e) { /* keep what is on screen */ }
 }
+document.querySelector(".ticker").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tk]");
+  if (!b) return;
+  const s = TK[b.dataset.tk];
+  s.n = b.dataset.act === "less" ? TK_FIRST : Math.min(s.n <= TK_FIRST ? TK_STEP : s.n + TK_STEP, 1500);
+  loadTicker(true);
+});
 // re-read the server cache each minute while the tab is visible, so a refresh done by anyone shows up
 setInterval(() => { if (document.visibilityState === "visible" && activeTab() === "overview") loadTicker(); }, 60000);
 
@@ -571,7 +601,7 @@ async function loadAlerts() {
 }
 
 // ------------------------------------------------------------------ outbound link clicks are logged (where, and where to)
-const linkContext = (a) => a.closest(".drawer") ? "victim details" : a.closest(".news-item") ? "news" : a.closest("#tab-alerts") ? "alerts"
+const linkContext = (a) => a.closest(".ticker") ? "latest incidents" : a.closest(".drawer") ? "victim details" : a.closest(".news-item") ? "news" : a.closest("#tab-alerts") ? "alerts"
   : a.closest("#tab-victims") ? "victims" : a.closest("#tab-news") ? "news page" : a.closest(".foot") ? "footer" : "page";
 function logLink(e) {
   const a = e.target.closest && e.target.closest("a[href]");

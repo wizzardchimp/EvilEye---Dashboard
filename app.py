@@ -1472,8 +1472,8 @@ def api_news_summary():
 
 @app.get("/api/ticker")
 def api_ticker():
-    """Five most recent UK victims, and five most recent in the signed-in user's region. Read from the server's
-    cache only: this never calls an external service."""
+    """The most recent UK victims, and the most recent in the signed-in user's region (five each unless ?uk= / ?reg= ask
+    for more). Read from the server's cache only: this never calls an external service."""
     u = current_user()
     region = u["region"]
     prev = _prev_visit()
@@ -1484,8 +1484,10 @@ def api_ticker():
     pick = lambda v: {"title": v["post_title"], "group": v["group"], "sector": v["activity"], "seen": v.get("seen"),
                       "rocu": v["rocu"], "force": v["force_name"], "town": v.get("town", ""), "website": v["website"],
                       "new": _view(v, prev)["new"]}
-    return jsonify(region=region, uk=[pick(v) for v in uk_recent[:5]],
-                   regional=[pick(v) for v in [x for x in recent if x["rocu"] == region][:5]] if region else [],
+    n_uk, n_reg = max(1, _int("uk", 5, 1500)), max(1, _int("reg", 5, 1500))      # "View more" asks for longer lists
+    reg_all = [x for x in recent if x["rocu"] == region] if region else []
+    return jsonify(region=region, uk=[pick(v) for v in uk_recent[:n_uk]], uk_total=len(uk_recent),
+                   regional=[pick(v) for v in reg_all[:n_reg]], regional_total=len(reg_all),
                    updated=STATE.get("last_refresh", {}).get("rl_victims_gb"))
 
 

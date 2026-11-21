@@ -74,8 +74,15 @@ website domain must also agree with the registered name), and a confirmed match 
 UK Victims tab, with an optional note. It overrides every automatic method, is stored in PostgreSQL, survives refreshes
 and restarts, and is written to the activity log.
 
-The **Region** selector in the header filters Overview, UK Victims, Attack Feed and Gang Catalog, and is saved as the
+The **Region** selector in the header filters Overview, UK Victims and Gang Catalog, and is saved as the
 user's preference, which drives the "Latest in <region>" ticker. Alerts & News are national.
+
+**Latest UK incidents / Latest in <region>** show the five newest victims each. **View more** expands a list to 25, then
+**Show 25 more** adds 25 at a time (a height-capped, scrollable list; **Show fewer** collapses it). Each entry shows the
+group, sector and age on the left and the victim's area (town or district, when known) in a box on the right. The company
+name links to its own website when the source data gives a usable web address (opens in a new tab; never a leak-site
+address), and those clicks are recorded in the activity log as "latest incidents". `/api/ticker?uk=N&reg=N` returns up to
+1,500 per list.
 
 ## Users and activity (PostgreSQL)
 Accounts live in PostgreSQL (`DATABASE_URL`). The first admin is created from `EVILEYE_ADMIN_USER` (default `admin`) and
