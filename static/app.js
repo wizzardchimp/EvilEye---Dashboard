@@ -190,20 +190,11 @@ function balanceStrip() {
 }
 window.addEventListener("resize", debounce(balanceStrip, 150));
 
-function drawTrend(holder, series, labelFn, curLast) {
-  const max = Math.max(1, ...series.map((s) => s.count));
-  holder.innerHTML = series.map((s, i) => `
-    <div class="col${curLast && i === series.length - 1 ? " cur" : ""}" title="${esc(labelFn(s, true))}: ${s.count}">
-      <span class="val">${s.count}</span><div class="bar" style="height:${Math.max(2, (s.count / max) * 82)}%"></div><span class="lab">${esc(labelFn(s, false))}</span>
-    </div>`).join("");
-}
-const weekLabel = (s, long) => { const d = new Date(s.week + "T00:00:00Z"); return long ? `Week of ${d.toUTCString().slice(5, 11)}` : d.toUTCString().slice(5, 11).replace(/^0/, ""); };
-
 async function loadOverview() {
   const holder = $("#stat-cards");
   const [y, g, s, rg] = ["chart-year", "chart-gangs", "chart-sectors", "chart-regions"].map((i) => $(`#${i}`));
   if (!holder.children.length) { y.innerHTML = g.innerHTML = s.innerHTML = sk(6); }
-  loadNewsTop(); loadTrend();
+  loadNewsTop();
   try {
     const d = await api(`/api/summary?${rq()}`);
     holder.innerHTML = [
@@ -250,13 +241,6 @@ async function loadOverview() {
       $("#newbar-go").addEventListener("click", () => { vm.newOnly = true; vm.page = 0; $("#vnew").checked = true; showTab("victims", true); });
     } else nb.hidden = true;
   } catch (e) { holder.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
-}
-async function loadTrend() {
-  try {
-    const d = await api(`/api/trend?${rq({ weeks: "12" })}`);
-    drawTrend($("#chart-trend"), d.series, weekLabel, true);
-    $("#trend-meta").textContent = `avg ${d.average}/week${region ? ` · ${region}` : ""}`;
-  } catch (e) { /* leave empty */ }
 }
 function newsItemHTML(n, withSummary) {
   const themes = (n.themes || []).slice(0, 3).map((t) => `<span class="badge src">${esc(t)}</span>`).join(" ");

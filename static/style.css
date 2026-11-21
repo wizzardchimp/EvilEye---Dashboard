@@ -402,14 +402,6 @@ select.search { flex: 0 1 210px; }
 .rtile.dim .rbar i { background: var(--muted); }
 .region-card .hint { margin: 12px 0 0; }
 
-/* ---------- trend chart ---------- */
-.trend { display: flex; align-items: flex-end; gap: 6px; height: 132px; }
-.trend .col { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
-.trend .bar { width: 100%; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--accent), var(--bar-a)); min-height: 2px; }
-.trend .col.cur .bar { opacity: .55; }
-.trend .val { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.trend .lab { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
-
 /* ---------- dark web news ---------- */
 .news-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
 .news-head .hint { margin-bottom: 0; }

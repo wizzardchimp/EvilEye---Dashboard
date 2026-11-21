@@ -1272,24 +1272,6 @@ def api_victims_csv():
                     headers={"Content-Disposition": "attachment; filename=evileye-victims.csv"})
 
 
-@app.get("/api/trend")
-def api_trend():
-    """UK victims first seen per week (Monday start), for the selected region."""
-    weeks = max(2, _int("weeks", 12, 52))
-    today = datetime.now(timezone.utc).date()
-    this_monday = today - timedelta(days=today.weekday())
-    counts = Counter()
-    for v in _uk():
-        t = _ts(v.get("seen"))
-        if t:
-            d = t.astimezone(timezone.utc).date()
-            counts[d - timedelta(days=d.weekday())] += 1
-    series = [{"week": (this_monday - timedelta(weeks=i)).isoformat(), "count": counts.get(this_monday - timedelta(weeks=i), 0)}
-              for i in range(weeks - 1, -1, -1)]
-    done = [s["count"] for s in series[:-1]]            # the current week is still in progress
-    return jsonify(series=series, average=round(sum(done) / len(done), 1) if done else 0, region=_region())
-
-
 @app.get("/api/gangs")
 def api_gangs():
     q = request.args.get("q", "").lower()
