@@ -1369,32 +1369,37 @@ def api_news_summary():
     coverage = len(deep)
     change = round(100 * (c_deep - p_deep) / p_deep) if p_deep and c_deep is not None and deep else None
     th = themes.most_common()
-    parts = []
+    claims = sum(c for k, c in dwi_cats.items() if re.search(r"breach|leak", k, re.I))
+    busy = max(series, key=lambda x: x["count"]) if series else {"count": 0}
+    busy_label = datetime.fromisoformat(busy["date"]).strftime("%a %d %b") if busy["count"] else ""
+    trend = (f"{'up' if change >= 0 else 'down'} {abs(change)}% on the previous {days} days" if change is not None else None)
+    # structured points (icon key, label, text) for the page, plus a one-line headline
+    points, headline = [], ""
     if cur:
-        parts.append(f"In the last {days} days EvilEye tracked {len(cur)} dark web news items from {len(sources)} sources"
-                     + (f" ({'up' if change >= 0 else 'down'} {abs(change)}% on the previous {days} days, across the {coverage} sources with enough history to compare)." if change is not None else "."))
+        points.append({"k": "volume", "label": "Volume", "text": f"{len(cur)} items from {len(sources)} sources" + (f", {trend}" if trend else "")})
         if th:
-            lead = f"{th[0][0]} led with {th[0][1]} items ({round(100 * th[0][1] / len(cur))}%)"
+            lead = f"{th[0][0]}: {th[0][1]} items ({round(100 * th[0][1] / len(cur))}%)"
             if len(th) > 1:
-                lead += ", followed by " + " and ".join(f"{t} ({c})" for t, c in th[1:3])
-            parts.append(lead + ".")
+                lead += ", then " + " and ".join(f"{t} ({c})" for t, c in th[1:3])
+            points.append({"k": "theme", "label": "Leading themes", "text": lead})
+            headline = f"{th[0][0]} leads: {th[0][1]} of {len(cur)} items ({round(100 * th[0][1] / len(cur))}%)"
         if groups:
-            parts.append("Most-named ransomware groups: " + ", ".join(f"{g_} ({c})" for g_, c in groups.most_common(3)) + ".")
+            points.append({"k": "groups", "label": "Ransomware groups named", "text": ", ".join(f"{g_} ({c})" for g_, c in groups.most_common(3))})
         if dwi:
-            claims = sum(c for k, c in dwi_cats.items() if re.search(r"breach|leak", k, re.I))
-            parts.append(f"Dark Web Informer posted {len(dwi)} items, {claims} of them data breach or leak claims.")
-        parts.append(f"{len(uk)} item{'s' if len(uk) != 1 else ''} mention the UK." if uk else "No items mention the UK.")
-        busy = max(series, key=lambda s: s["count"])
+            points.append({"k": "claims", "label": "Dark Web Informer", "text": f"{len(dwi)} posts, {claims} of them data breach or leak claims"})
+        points.append({"k": "uk", "label": "UK", "text": f"{len(uk)} item{'s' if len(uk) != 1 else ''} mention the UK" if uk else "No items mention the UK"})
         if busy["count"]:
-            parts.append(f"Busiest day: {datetime.fromisoformat(busy['date']).strftime('%a %d %b')} ({busy['count']} items).")
+            points.append({"k": "busy", "label": "Busiest day", "text": f"{busy_label}: {busy['count']} items"})
     else:
-        parts.append(f"No dark web news items in the last {days} days yet: refresh to load the feeds.")
-    return jsonify(days=days, total=len(cur), previous=len(prev), change=change, comparable_sources=coverage, briefing=" ".join(parts),
+        headline = f"No dark web news in the last {days} days yet"
+    briefing = " ".join([headline + "."] + [f"{p['label']}: {p['text']}." for p in points]) if cur else headline + ": refresh to load the feeds."
+    return jsonify(days=days, total=len(cur), previous=len(prev), change=change, comparable_sources=coverage, briefing=briefing,
+                   headline=headline, points=points, delta=trend, busiest={"label": busy_label, "count": busy["count"]},
                    themes=[{"theme": t, "count": c, "share": _share(c, len(cur))} for t, c in th],
                    groups=[{"group": g_, "count": c} for g_, c in groups.most_common(8)],
                    sources=[{"source": s, "count": c} for s, c in sources.most_common()],
                    claim_types=[{"type": k, "count": c} for k, c in dwi_cats.most_common(6)],
-                   uk_count=len(uk), series=series,
+                   uk_count=len(uk), uk_items=[_news_public(n) for n in uk[:4]], series=series,
                    note="Built from headlines, categories and ransomware-group names. It does not read the articles.")
 
 

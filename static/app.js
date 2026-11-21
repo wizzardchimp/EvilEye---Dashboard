@@ -412,13 +412,13 @@ $("#dr-close").addEventListener("click", closeDrawer);
 backdrop.addEventListener("click", closeDrawer);
 
 // ------------------------------------------------------------------ dark web news page
-const nm = { days: 7, q: "", source: "", theme: "", uk: "", offset: 0 };
+const nm = { days: 7, q: "", source: "", theme: "", group: "", uk: "", offset: 0 };
 let newsFilled = false;
 async function loadNews(more) {
   const list = $("#news-list");
   if (more !== true) { nm.offset = 0; if (!list.children.length) list.innerHTML = sk(6); }
   const p = new URLSearchParams({ limit: "40", offset: String(nm.offset) });
-  if (nm.q) p.set("q", nm.q); if (nm.source) p.set("source", nm.source); if (nm.theme) p.set("theme", nm.theme); if (nm.uk) p.set("uk", "1");
+  if (nm.q) p.set("q", nm.q); if (nm.source) p.set("source", nm.source); if (nm.theme) p.set("theme", nm.theme); if (nm.group) p.set("group", nm.group); if (nm.uk) p.set("uk", "1");
   try {
     const [d, s] = await Promise.all([api(`/api/news?${p}`), more === true ? Promise.resolve(null) : api(`/api/news/summary?days=${nm.days}`)]);
     if (!newsFilled) {
@@ -427,6 +427,8 @@ async function loadNews(more) {
       newsFilled = true;
     }
     if (s) renderNewsSummary(s);
+    renderNewsChips();
+    document.querySelectorAll("#n-legend .lg, #n-donut circle[data-theme]").forEach((el) => { const on = el.dataset.theme === nm.theme; el.classList.toggle("on", on); });
     const html = d.items.map((n) => newsItemHTML(n, true)).join("");
     list.innerHTML = (more === true ? list.innerHTML : "") + (html || '<div class="ldr">no items match</div>');
     nm.offset += d.items.length;
@@ -434,22 +436,72 @@ async function loadNews(more) {
     $("#n-more").hidden = nm.offset >= d.total;
   } catch (e) { list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
 }
+const THEME_COLOR = { "Ransomware": "var(--c1)", "Data breach / leak": "var(--c2)", "Access & credentials": "var(--c3)", "Malware": "var(--c5)",
+  "Forums & marketplaces": "var(--c6)", "Law enforcement": "var(--c4)", "Vulnerabilities": "var(--c7)" };
+const POINT_ICON = {
+  volume: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  theme: '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>',
+  groups: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  claims: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
+  uk: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
+  busy: '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+};
+const HOT_POINTS = new Set(["groups", "uk"]);
+function donut(themes, total) {
+  const R = 44, C = 2 * Math.PI * R, gap = themes.length > 1 ? 2 : 0;
+  const sum = themes.reduce((a, t) => a + t.count, 0) || 1;
+  let off = 0;
+  const seg = themes.map((t) => {
+    const len = Math.max(0, (t.count / sum) * C - gap);
+    const el = `<circle cx="60" cy="60" r="${R}" stroke="${THEME_COLOR[t.theme] || "var(--c7)"}" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" data-theme="${esc(t.theme)}" class="${nm.theme === t.theme ? "on" : ""}"><title>${esc(t.theme)}: ${t.count} items</title></circle>`;
+    off += (t.count / sum) * C;
+    return el;
+  }).join("");
+  $("#n-donut").innerHTML = `<circle class="track" cx="60" cy="60" r="${R}"/>${seg}`;
+  $("#n-donut-total").textContent = total;
+  $("#n-legend").innerHTML = themes.map((t) => `<button type="button" class="lg${nm.theme === t.theme ? " on" : ""}" data-theme="${esc(t.theme)}" title="Show only ${esc(t.theme)} items"><i style="background:${THEME_COLOR[t.theme] || "var(--c7)"}"></i><span>${esc(t.theme)}</span><b>${t.count}</b></button>`).join("")
+    + (themes.length ? '<p class="hint small" style="margin:8px 0 0">An item can carry several themes.</p>' : "");
+}
 function renderNewsSummary(s) {
-  $("#n-briefing").textContent = s.briefing;
-  $("#n-note").textContent = s.note;
   $("#n-when").textContent = `last ${s.days} days`;
-  const chg = s.change == null ? "n/a" : `${s.change >= 0 ? "+" : ""}${s.change}%`;
-  $("#n-stats").innerHTML = [["Items tracked", s.total, ""], ["Sources reporting", s.sources.length, ""], ["Mention the UK", s.uk_count, "hl"],
-    [`Change vs previous ${s.days} days`, chg, ""]].map(([l, n, c]) => `<div class="stat ${c}"><div class="num">${n}</div><div class="label">${l}</div></div>`).join("");
-  drawBars($("#n-themes"), s.themes.map((t) => [t.theme, t.count, t.share]));
-  drawBars($("#n-sources"), s.sources.map((x) => [x.source, x.count]));
-  drawBars($("#n-groups"), s.groups.map((x) => [x.group, x.count]));
+  const dl = $("#n-delta");
+  dl.hidden = false;
+  if (s.change == null) { dl.className = "delta flat"; dl.textContent = "no trend yet"; dl.title = "The feeds do not reach back far enough to compare with the previous period."; }
+  else { const up = s.change >= 0; dl.className = `delta ${s.change === 0 ? "flat" : up ? "up" : "down"}`; dl.textContent = `${up ? "▲" : "▼"} ${Math.abs(s.change)}% vs previous ${s.days} days`; dl.title = `Compared across the ${s.comparable_sources} source(s) whose feeds reach back far enough.`; }
+  $("#n-headline").textContent = s.headline;
+  $("#n-points").innerHTML = s.points.map((p) => `<li><span class="ic${HOT_POINTS.has(p.k) ? " hot" : ""}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${POINT_ICON[p.k] || ""}</svg></span><div><div class="lbl">${esc(p.label)}</div><div class="txt">${esc(p.text)}</div></div></li>`).join("");
+  donut(s.themes, s.total);
   drawTrend($("#n-daily"), s.series.map((x) => ({ week: x.date, count: x.count })), (x, long) => {
     const d = new Date(x.week + "T00:00:00Z"); return long ? d.toUTCString().slice(0, 11) : s.series.length > 14 ? d.getUTCDate() : d.toUTCString().slice(0, 3);
   }, false);
-  $("#n-claims").innerHTML = s.claim_types.length ? '<div class="sect" style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Dark Web Informer posts by type</div>' : "";
-  if (s.claim_types.length) { const h = document.createElement("div"); h.className = "bars"; $("#n-claims").appendChild(h); drawBars(h, s.claim_types.map((c) => [c.type, c.count])); }
+  $("#n-peak").textContent = s.busiest.count ? `Busiest: ${s.busiest.label} (${s.busiest.count} items)` : "";
+  $("#n-note").textContent = s.note;
+  $("#n-stats").innerHTML = [["Items tracked", s.total, ""], ["Sources reporting", s.sources.length, ""], ["Mention the UK", s.uk_count, "hl"],
+    ["Ransomware groups named", s.groups.length, ""]].map(([l, n, c]) => `<div class="stat ${c}"><div class="num">${n}</div><div class="label">${l}</div></div>`).join("");
+  drawBars($("#n-sources"), s.sources.map((x) => [x.source, x.count]));
+  drawBars($("#n-groups"), s.groups.map((x) => [x.group, x.count]));
+  $("#n-groups").querySelectorAll(".bar-row").forEach((row, i) => { row.classList.add("pick"); row.title = "Show only items naming this group"; row.addEventListener("click", () => setNewsFilter("group", nm.group === s.groups[i].group ? "" : s.groups[i].group)); });
+  drawBars($("#n-claims"), s.claim_types.map((c) => [c.type, c.count]));
+  $("#n-uk").innerHTML = s.uk_items.length ? s.uk_items.map((n) => newsItemHTML(n, false)).join("") : '<div class="ldr">No items mention the UK in this period.</div>';
 }
+// filters: clicking a theme (donut or legend) or a group filters the list below; chips show and clear them
+function setNewsFilter(key, value) {
+  nm[key] = value;
+  if (key === "theme") $("#ntheme").value = value;
+  loadNews(); track("filter", `news ${key}: ${value || "all"}`);
+  $("#nq").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function renderNewsChips() {
+  const chips = [["theme", nm.theme], ["group", nm.group]].filter(([, v]) => v);
+  const el = $("#nfilters");
+  el.hidden = !chips.length;
+  el.innerHTML = chips.map(([k, v]) => `<span class="chip">${k === "theme" ? "Theme" : "Group"}: <strong>${esc(v)}</strong><button type="button" data-clear="${k}" aria-label="Remove ${k} filter">&times;</button></span>`).join("");
+}
+$("#nfilters").addEventListener("click", (e) => { const b = e.target.closest("[data-clear]"); if (b) setNewsFilter(b.dataset.clear, ""); });
+$("#brief").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-theme]");
+  if (t) setNewsFilter("theme", nm.theme === t.dataset.theme ? "" : t.dataset.theme);
+});
 $("#nperiod").addEventListener("change", () => { nm.days = +$("#nperiod").value; loadNews(); track("filter", `news period: ${nm.days}d`); });
 $("#nsource").addEventListener("change", () => { nm.source = $("#nsource").value; loadNews(); track("filter", `news source: ${nm.source || "all"}`); });
 $("#ntheme").addEventListener("change", () => { nm.theme = $("#ntheme").value; loadNews(); track("filter", `news theme: ${nm.theme || "all"}`); });

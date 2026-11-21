@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=31">
+  <link rel="stylesheet" href="/static/style.css?v=33">
 </head>
 <body>
   <header class="topbar">
@@ -136,17 +136,33 @@
           <select id="nperiod" class="search"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option></select>
         </label>
       </div>
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-head"><h3>Briefing</h3><span id="n-when" class="meta"></span></div>
-        <p id="n-briefing" class="briefing"></p>
-        <p id="n-note" class="hint small"></p>
+      <div class="card brief" id="brief">
+        <div class="brief-main">
+          <div class="brief-kicker"><span id="n-when" class="kick">last 7 days</span><span id="n-delta" class="delta" hidden></span></div>
+          <h2 id="n-headline" class="brief-headline"></h2>
+          <ul id="n-points" class="points"></ul>
+        </div>
+        <div class="brief-donut">
+          <div class="sect-t">Theme mix</div>
+          <div class="donut-wrap">
+            <svg id="n-donut" viewBox="0 0 120 120" role="img" aria-label="Share of dark web news items by theme"></svg>
+            <div class="donut-center"><b id="n-donut-total">0</b><span>items</span></div>
+          </div>
+          <div id="n-legend" class="legend"></div>
+        </div>
+        <div class="brief-days">
+          <div class="sect-t">Items per day</div>
+          <div id="n-daily" class="trend"></div>
+          <p id="n-peak" class="hint small"></p>
+        </div>
       </div>
+      <p id="n-note" class="hint small brief-note"></p>
       <div id="n-stats" class="stat-grid"></div>
       <div class="chart-grid">
-        <div class="card"><div class="card-head"><h3>Themes</h3></div><div id="n-themes" class="bars"></div></div>
         <div class="card"><div class="card-head"><h3>Sources</h3></div><div id="n-sources" class="bars"></div></div>
-        <div class="card"><div class="card-head"><h3>Ransomware groups named</h3></div><div id="n-groups" class="bars"></div></div>
-        <div class="card"><div class="card-head"><h3>Items per day</h3></div><div id="n-daily" class="trend"></div><div id="n-claims" class="bars" style="margin-top:14px"></div></div>
+        <div class="card"><div class="card-head"><h3>Ransomware groups named</h3><span class="meta">click to filter</span></div><div id="n-groups" class="bars"></div></div>
+        <div class="card"><div class="card-head"><h3>Dark Web Informer posts by type</h3></div><div id="n-claims" class="bars"></div></div>
+        <div class="card wide"><div class="card-head"><h3>Mentioning the UK</h3></div><div id="n-uk" class="uk-grid"></div></div>
       </div>
       <div class="toolbar">
         <input id="nq" class="search" type="search" placeholder="Search dark web news&hellip; (press /)">
@@ -159,6 +175,7 @@
         <label class="chk" title="Small previews of each post's own image. Dark Web Informer's are screenshots of forum posts."><input type="checkbox" class="thumbs-toggle" checked> Thumbnails</label>
         <button id="nrefresh" class="btn">Refresh</button>
       </div>
+      <div id="nfilters" class="chips" hidden></div>
       <p id="ncount" class="count"></p>
       <div id="news-list" class="post-list"></div>
       <p><button id="n-more" class="more" type="button" hidden>Load more</button></p>
@@ -277,6 +294,6 @@
     </div>
     <div id="dr-body" class="drawer-body"></div>
   </aside>
-  <script src="/static/app.js?v=31"></script>
+  <script src="/static/app.js?v=33"></script>
 </body>
 </html>
