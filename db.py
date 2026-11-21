@@ -48,6 +48,7 @@ create table if not exists placement_overrides (
 alter table users add column if not exists last_visit timestamptz;
 alter table users add column if not exists prev_visit timestamptz;
 alter table users add column if not exists onboarded_at timestamptz;
+alter table users add column if not exists must_change boolean not null default false;
 alter table placement_overrides add column if not exists town text not null default '';
 """
 

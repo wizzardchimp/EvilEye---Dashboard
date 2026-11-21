@@ -100,6 +100,15 @@ EVILEYE_PASSWORD=choose-one-long-password .venv/bin/python app.py     # legacy m
 ```
 Set `DATABASE_URL` to use real user accounts.
 
+## First sign-in: choose your own password
+A password an admin has set is known to the admin, so it is temporary. Users created from the Users tab, anyone whose password an
+admin resets, and a first admin created from `EVILEYE_PASSWORD` get a **Set your own password** screen before anything else
+(then the welcome tour). It is enforced by the server (`users.must_change`): until the password is changed every API call except
+`/api/me`, `/api/me/password` and sign-out returns 403. The new password must be at least 10 characters, differ from the temporary
+one and not contain the username. Existing users are not forced. The Users page marks pending users "must set password", and the
+change is logged as "first sign-in: chose own password". The form carries the username and `new-password` hints so password managers
+can offer to save it.
+
 ## Welcome tour
 The first time a user signs in they see a welcome screen (three bullets: what EvilEye is) and then **Choose your local ROCU
 region** (each region lists the police forces it covers and how many victims are on record). Choosing a region saves it as

@@ -628,7 +628,7 @@ def bootstrap_admin():
     if LEGACY or not PASSWORD:
         return
     if db.one("select count(*) as c from users")["c"] == 0:
-        db.run("insert into users (username, password_hash, role, created_by) values (%s,%s,'admin','bootstrap')",
+        db.run("insert into users (username, password_hash, role, created_by, must_change) values (%s,%s,'admin','bootstrap',true)",
                (ADMIN_USER, generate_password_hash(PASSWORD)))
 
 
@@ -651,10 +651,10 @@ def current_user():
     if LEGACY:
         if uid == "legacy" and session.get("ok"):
             g.user = {"id": 0, "username": "admin", "role": "admin", "region": session.get("region", ""), "legacy": True,
-                      "prev_visit": session.get("prev_visit"), "onboarded_at": session.get("onboarded")}
+                      "prev_visit": session.get("prev_visit"), "onboarded_at": session.get("onboarded"), "must_change": False}
     elif isinstance(uid, int):
         try:
-            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at from users where id=%s", (uid,))
+            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at, must_change from users where id=%s", (uid,))
             if row and row["active"] and session.get("pwv") == _pwv(row["password_hash"]):
                 g.user = row
         except Exception:
@@ -675,6 +675,8 @@ def guard():
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and p.startswith("/api/") \
             and request.headers.get("X-Requested-With") != "fetch":
         return jsonify(error="bad request"), 400          # CSRF guard: browsers cannot add this cross-site
+    if user.get("must_change") and p not in ("/", "/logout", "/health", "/api/me", "/api/me/password"):
+        return jsonify(error="Set your own password first.", code="password_change_required"), 403
     return None
 
 
@@ -804,7 +806,8 @@ def api_me():
     u = current_user()
     p = _prev_visit()
     return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY,
-                   regions=geo.FILTER_REGIONS, prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")))
+                   regions=geo.FILTER_REGIONS, prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")),
+                   must_change=bool(u.get("must_change")))
 
 
 @app.post("/api/me/onboarded")
@@ -857,10 +860,14 @@ def api_me_password():
     new = b.get("new", "")
     if len(new) < 10:
         return jsonify(error="New password must be at least 10 characters."), 400
+    if new == b.get("current", ""):
+        return jsonify(error="Your new password must be different from the current one."), 400
+    if u["username"].lower() in new.lower():
+        return jsonify(error="Your password must not contain your username."), 400
     h = generate_password_hash(new)
-    db.run("update users set password_hash=%s where id=%s", (h, u["id"]))
+    db.run("update users set password_hash=%s, must_change=false where id=%s", (h, u["id"]))
     session["pwv"] = _pwv(h)
-    log("password_change", "own password")
+    log("password_change", "first sign-in: chose own password" if u.get("must_change") else "own password")
     return jsonify(ok=True)
 
 
@@ -892,7 +899,7 @@ def _admin_count_excluding(uid):
 def admin_users():
     rows = db.many("""select u.id, u.username, u.role, u.region, u.active, u.created_at, u.created_by, u.last_login,
                       (select count(*) from activity a where a.user_id = u.id) as events,
-                      (select max(a.ts) from activity a where a.user_id = u.id) as last_activity
+                      (select max(a.ts) from activity a where a.user_id = u.id) as last_activity, u.must_change
                       from users u order by lower(u.username)""")
     return jsonify(users=[{**r, "created_at": r["created_at"].isoformat(),
                            "last_login": r["last_login"].isoformat() if r["last_login"] else None,
@@ -916,7 +923,7 @@ def admin_user_create():
         return jsonify(error="Unknown region."), 400
     if db.one("select 1 as x from users where lower(username)=lower(%s)", (username,)):
         return jsonify(error="That username already exists."), 409
-    row = db.run("insert into users (username, password_hash, role, region, created_by) values (%s,%s,%s,%s,%s) returning id",
+    row = db.run("insert into users (username, password_hash, role, region, created_by, must_change) values (%s,%s,%s,%s,%s,true) returning id",
                  (username, generate_password_hash(pw), role, region, current_user()["username"]))
     log("user_create", f"{username} ({role})")
     return jsonify(id=row["id"]), 201
@@ -936,7 +943,8 @@ def admin_user_update(uid):
             return jsonify(error="Password must be at least 10 characters."), 400
         sets.append("password_hash=%s")
         vals.append(generate_password_hash(b["password"]))
-        notes.append("password reset")
+        sets.append("must_change=true")
+        notes.append("password reset (user must choose their own)")
     if "role" in b:
         if b["role"] not in ("admin", "user"):
             return jsonify(error="Role must be admin or user."), 400

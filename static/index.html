@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=37">
+  <link rel="stylesheet" href="/static/style.css?v=39">
 </head>
 <body>
   <header class="topbar">
@@ -218,22 +218,23 @@
     </section>
 
     <section id="tab-users" class="panel">
-      <div class="card" style="margin-bottom:16px">
+      <div class="card add-user">
         <div class="card-head"><h3>Add a user</h3></div>
-        <form id="uform" class="form-row" autocomplete="off">
+        <form id="uform" class="uform" autocomplete="off">
           <label class="field">Username<input id="u-name" class="search" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="off"></label>
-          <label class="field">Password (10+ characters)
+          <label class="field">Temporary password (10+ characters)
             <span class="pw"><input id="u-pass" class="search" type="text" required minlength="10" autocomplete="new-password"><button type="button" class="more" id="u-gen">Generate</button></span>
           </label>
           <label class="field">Role<select id="u-role" class="search"><option value="user">User</option><option value="admin">Admin</option></select></label>
           <label class="field">Region<select id="u-region" class="search"><option value="">All UK</option></select></label>
           <button class="btn" type="submit">Add user</button>
         </form>
-        <p id="u-msg" class="hint" role="status"></p>
+        <div id="u-msg" class="callout" role="status" hidden></div>
+        <p class="hint small" style="margin-bottom:0">New users, and anyone whose password you reset, must choose their own password the first time they sign in.</p>
       </div>
       <div class="table-wrap">
-        <table class="table">
-          <thead><tr><th>User</th><th>Role</th><th>Region</th><th>Status</th><th>Last login</th><th>Activity</th><th>Actions</th></tr></thead>
+        <table class="table users">
+          <thead><tr><th>User</th><th>Role</th><th>Region</th><th>Status</th><th>Last sign-in</th><th>Activity</th><th class="r">Actions</th></tr></thead>
           <tbody id="user-rows"></tbody>
         </table>
       </div>
@@ -289,6 +290,22 @@
     </div>
     <div id="dr-body" class="drawer-body"></div>
   </aside>
+  <div id="pwreq" class="onboard" hidden role="dialog" aria-modal="true" aria-labelledby="pr-title">
+    <div class="ob-card pr-card">
+      <img class="ob-mark" src="/static/mark-off.png" width="76" height="86" alt="">
+      <h1 id="pr-title" class="ob-title">Set your own password</h1>
+      <p class="ob-sub2">An administrator chose your first password, so they know it. Choose one that only you know: at least 10 characters, and not your username.</p>
+      <form id="prform" class="pr-form" method="post" action="#" novalidate>
+        <label class="field">Signed in as<input id="pr-user" class="search" name="username" type="text" autocomplete="username" readonly></label>
+        <label class="field">Temporary password (the one you just used)<input id="pr-cur" class="search" name="current" type="password" autocomplete="current-password" required></label>
+        <label class="field">New password<input id="pr-new" class="search" name="password" type="password" minlength="10" autocomplete="new-password" required>
+          <span class="meter" aria-hidden="true"><i id="pr-meter"></i></span><span id="pr-strength" class="strength"></span></label>
+        <label class="field">Repeat new password<input id="pr-rep" class="search" name="password2" type="password" minlength="10" autocomplete="new-password" required></label>
+        <p id="pr-msg" class="pr-msg" role="alert" hidden></p>
+        <div class="ob-actions"><button type="submit" class="btn big">Save my password</button><a href="/logout" class="link">Sign out</a></div>
+      </form>
+    </div>
+  </div>
   <div id="onboard" class="onboard" hidden role="dialog" aria-modal="true" aria-labelledby="ob-title">
     <div class="ob-card">
       <div id="ob-step1" class="ob-step">
@@ -315,6 +332,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=38"></script>
+  <script src="/static/app.js?v=41"></script>
 </body>
 </html>

@@ -484,8 +484,8 @@ select.search { flex: 0 1 210px; }
 .uk-grid .news-item:nth-child(-n+2) { border-top: 0; padding-top: 2px; }
 @media (max-width: 760px) { .uk-grid .news-item:nth-child(2) { border-top: 1px solid var(--border); padding-top: 11px; } }
 
-/* long addresses in log rows wrap instead of widening the table */
-.table td { overflow-wrap: anywhere; }
+/* long addresses in log rows wrap instead of widening the table (only the detail column) */
+#act-rows td:nth-child(4), #ua-rows td:nth-child(3) { overflow-wrap: anywhere; }
 
 /* ---------- welcome tour (shown once per user; reopen from Account) ---------- */
 .onboard { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 24px 16px; overflow-y: auto;
@@ -516,3 +516,64 @@ select.search { flex: 0 1 210px; }
 .ob-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); }
 .ob-dots i.on { background: var(--accent); width: 22px; border-radius: 6px; }
 @media (max-width: 640px) { .ob-card { padding: 26px 18px 20px; } .ob-title { font-size: 23px; } .ob-points li { grid-template-columns: 38px 1fr; gap: 12px; padding: 12px; font-size: 14px; } .ob-ic { width: 38px; height: 38px; } }
+
+/* ---------- Users page: aligned form and table ---------- */
+.add-user { margin-bottom: 18px; }
+.uform { display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(280px, 2.2fr) 120px minmax(150px, 1fr) auto; gap: 14px 16px; align-items: end; }
+.uform .field { min-width: 0; }
+.uform .search, .uform .btn, .uform .more { height: 38px; }
+.uform .search { width: 100%; flex: none; min-width: 0; }
+.uform .pw { display: flex; gap: 8px; }
+.uform .pw .search { flex: 1; }
+.uform .pw .more { padding: 0 14px; }
+.uform .btn { padding: 0 22px; }
+.callout { margin: 14px 0 10px; padding: 11px 14px; border-radius: 9px; font-size: 13.5px; background: color-mix(in srgb, var(--good) 10%, transparent); border: 1px solid color-mix(in srgb, var(--good) 35%, transparent); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.callout.err { background: color-mix(in srgb, var(--bad) 10%, transparent); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.users th, .users td { vertical-align: middle; }
+.users td { padding-top: 12px; padding-bottom: 12px; }
+.users th.r, .users td.r { text-align: right; }
+.users .who { display: flex; flex-direction: column; gap: 2px; min-width: 160px; }
+.users .who .nm { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+.users .st { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.users select.search { width: 100%; min-width: 150px; max-width: 200px; height: 32px; padding: 0 8px; font-size: 12.5px; }
+.users td.actions { display: table-cell; white-space: nowrap; }
+.row-actions { display: inline-flex; justify-content: flex-end; gap: 6px; }
+.row-actions .icon-btn { width: 32px; height: 32px; }
+.row-actions .icon-btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 38%, transparent); }
+.row-actions .icon-btn.danger:hover { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+@media (max-width: 1100px) {
+  .uform { grid-template-columns: 1fr 1fr; grid-template-areas: "name role" "pass pass" "region add"; }
+  .uform > label:nth-child(1) { grid-area: name; } .uform > label:nth-child(2) { grid-area: pass; }
+  .uform > label:nth-child(3) { grid-area: role; } .uform > label:nth-child(4) { grid-area: region; }
+  .uform > .btn { grid-area: add; justify-self: start; }
+}
+@media (max-width: 640px) { .uform { grid-template-columns: 1fr; grid-template-areas: "name" "pass" "role" "region" "add"; } }
+.users { min-width: 900px; }
+.users td, .users th { white-space: nowrap; }
+.users .who .meta { white-space: normal; }
+/* phones: each user becomes a stacked card instead of a squeezed table row */
+@media (max-width: 640px) {
+  .users { min-width: 0; } .users thead { display: none; }
+  .users, .users tbody, .users tr, .users td { display: block; width: 100%; }
+  .users tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .users tbody tr:last-child { border-bottom: 0; }
+  .users td { padding: 0; border: 0; white-space: normal; }
+  .users td::before { content: attr(data-label); display: block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 4px; }
+  .users td.who-cell, .users td.actions { grid-column: 1 / -1; } .users td.who-cell::before, .users td.actions::before { display: none; }
+  .users select.search { max-width: none; }
+  .users td.actions { text-align: left; } .row-actions { justify-content: flex-start; }
+}
+/* ---------- set-your-own-password screen ---------- */
+.pr-card { width: min(520px, 100%); }
+.pr-card .ob-title, .pr-card .ob-sub2, .pr-card .ob-mark { align-self: center; text-align: center; }
+.pr-card { display: flex; flex-direction: column; align-items: center; }
+.pr-form { display: flex; flex-direction: column; gap: 14px; width: 100%; text-align: left; }
+.pr-form .search { width: 100%; flex: none; height: 40px; }
+.pr-form input[readonly] { background: var(--surface-2); color: var(--muted); }
+.pr-form .ob-actions { margin-top: 6px; }
+.meter { display: block; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-top: 2px; }
+.meter i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--bad); transition: width .2s ease, background .2s ease; }
+.meter i[data-l="2"] { background: var(--warn); } .meter i[data-l="3"] { background: var(--link); } .meter i[data-l="4"] { background: var(--good); }
+.strength { font-size: 12px; color: var(--muted); min-height: 16px; }
+.pr-msg { font-size: 13px; color: var(--bad); padding: 9px 12px; border-radius: 8px; background: color-mix(in srgb, var(--bad) 10%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent); }
+.sr-only-input { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }

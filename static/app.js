@@ -618,6 +618,7 @@ const genPassword = () => {
   const a = new Uint32Array(18); crypto.getRandomValues(a);
   return [...a].map((n) => chars[n % chars.length]).join("");
 };
+const ICONS = {"key": "<path d=\"M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4\"/>", "shield": "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/>", "ban": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"4.93\" y1=\"4.93\" x2=\"19.07\" y2=\"19.07\"/>", "ok": "<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\"/><polyline points=\"22 4 12 14.01 9 11.01\"/>", "trash": "<polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/>"};
 let userCache = [];
 async function loadUsers() {
   const body = $("#user-rows");
@@ -629,19 +630,18 @@ async function loadUsers() {
     if ($("#u-region").options.length <= 1) $("#u-region").innerHTML = regionOpts("");
     body.innerHTML = d.users.map((u) => `
       <tr data-id="${u.id}">
-        <td><strong>${esc(u.username)}</strong>${u.username === ME.username ? ' <span class="badge src">you</span>' : ""}<div class="meta">created ${fmtDate(u.created_at)}${u.created_by ? ` by ${esc(u.created_by)}` : ""}</div></td>
-        <td><span class="badge ${u.role === "admin" ? "wm" : "uk"}">${esc(u.role)}</span></td>
-        <td><select class="search u-reg" data-id="${u.id}" aria-label="Region for ${esc(u.username)}">${regionOpts(u.region)}</select></td>
-        <td>${u.active ? '<span class="badge on">active</span>' : '<span class="badge off">disabled</span>'}</td>
-        <td>${u.last_login ? fmtTime(u.last_login) : '<span class="meta">never</span>'}</td>
-        <td><button type="button" class="link" data-act="events" data-id="${u.id}" title="See ${esc(u.username)}'s activity">${u.events} event${u.events === 1 ? "" : "s"}</button>
+        <td class="who-cell"><div class="who"><span class="nm">${esc(u.username)}${u.username === ME.username ? ' <span class="badge src">you</span>' : ""}</span><span class="meta">created ${fmtDate(u.created_at)}${u.created_by ? ` by ${esc(u.created_by)}` : ""}</span></div></td>
+        <td data-label="Role"><span class="badge ${u.role === "admin" ? "wm" : "uk"}">${esc(u.role)}</span></td>
+        <td data-label="Region"><select class="search u-reg" data-id="${u.id}" aria-label="Region for ${esc(u.username)}">${regionOpts(u.region)}</select></td>
+        <td data-label="Status"><div class="st">${u.active ? '<span class="badge on">active</span>' : '<span class="badge off">disabled</span>'}${u.must_change ? '<span class="badge wm" title="They must choose their own password when they next sign in">must set password</span>' : ""}</div></td>
+        <td data-label="Last sign-in">${u.last_login ? fmtTime(u.last_login) : '<span class="meta">never</span>'}</td>
+        <td data-label="Activity"><button type="button" class="link" data-act="events" data-id="${u.id}" title="See ${esc(u.username)}'s activity">${u.events} event${u.events === 1 ? "" : "s"}</button>
           <div class="meta">${u.last_activity ? `last ${ago(u.last_activity)}` : "none yet"}</div></td>
-        <td class="actions">
-          <button class="more" data-act="pw" data-id="${u.id}">Reset password</button>
-          <button class="more" data-act="role" data-id="${u.id}">${u.role === "admin" ? "Make user" : "Make admin"}</button>
-          <button class="more" data-act="active" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>
-          <button class="more danger" data-act="del" data-id="${u.id}">Delete</button>
-        </td>
+        <td class="actions r"><div class="row-actions">
+          ${[["pw", "key", "Reset password", ""], ["role", "shield", u.role === "admin" ? "Make user (remove admin)" : "Make admin", ""],
+             ["active", u.active ? "ban" : "ok", u.active ? "Disable sign-in" : "Enable sign-in", ""], ["del", "trash", "Delete user", " danger"]]
+            .map(([act, ic, label, cls]) => `<button type="button" class="more icon-btn${cls}" data-act="${act}" data-id="${u.id}" title="${label}" aria-label="${label}: ${esc(u.username)}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[ic]}</svg></button>`).join("")}
+        </div></td>
       </tr>`).join("");
   } catch (e) { body.innerHTML = `<tr><td colspan="7" class="ldr">${esc(e.message)}</td></tr>`; }
 }
@@ -652,11 +652,14 @@ $("#uform").addEventListener("submit", async (e) => {
   try {
     const name = $("#u-name").value.trim(), pw = $("#u-pass").value;
     await api("/api/admin/users", { method: "POST", body: { username: name, password: pw, role: $("#u-role").value, region: $("#u-region").value } });
-    msg.innerHTML = `Created <strong>${esc(name)}</strong>. Give them this password now (it cannot be shown again): <code>${esc(pw)}</code>`;
+    msg.hidden = false; msg.className = "callout";
+    msg.innerHTML = `<span>Created <strong>${esc(name)}</strong>. Give them this temporary password now (it cannot be shown again):</span> <code>${esc(pw)}</code> <button type="button" class="more small" data-pw="${esc(pw)}">Copy</button>`;
     $("#u-name").value = ""; $("#u-pass").value = "";
     loadUsers();
-  } catch (err) { msg.textContent = err.message; }
+  } catch (err) { msg.hidden = false; msg.className = "callout err"; msg.textContent = err.message; }
 });
+// copy a temporary password (deliberately not written to the activity log)
+document.addEventListener("click", async (e) => { const b = e.target.closest("button[data-pw]"); if (b) toast((await copyText(b.dataset.pw)) ? "Password copied" : "Copy failed: select it manually"); });
 $("#user-rows").addEventListener("change", async (e) => {
   const sel = e.target.closest(".u-reg");
   if (!sel) return;
@@ -678,7 +681,7 @@ $("#user-rows").addEventListener("click", async (e) => {
 function passwordDialog(u) {
   openModal(); $("#modal-back").hidden = true;
   $("#modal-title").textContent = `Reset password: ${u.username}`;
-  $("#modal-explain").textContent = "Sets a new password and signs them out everywhere. Tell them the new password yourself.";
+  $("#modal-explain").textContent = "Sets a temporary password and signs them out everywhere. Tell them the password yourself: they will be asked to choose their own the next time they sign in.";
   $("#modal-body").innerHTML = `<form id="pwform" class="form-row"><label class="field">New password (10+ characters)
     <span class="pw"><input id="np" class="search" type="text" minlength="10" required autocomplete="new-password"><button type="button" class="more" id="npg">Generate</button></span></label>
     <button class="btn" type="submit">Save</button></form><p id="pwmsg" class="hint"></p>`;
@@ -746,6 +749,41 @@ $("#act-more").addEventListener("click", () => loadActivity(true));
 ["act-user", "act-event"].forEach((id) => $(`#${id}`).addEventListener("change", () => loadActivity()));
 $("#act-q").addEventListener("input", debounce(() => loadActivity(), 350));
 
+// ------------------------------------------------------------------ first sign-in: choose your own password (enforced by the server)
+function strengthOf(pw) {
+  let s = 0;
+  if (pw.length >= 10) s++;
+  if (pw.length >= 14) s++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
+  if (/\d/.test(pw)) s++;
+  if (/[^A-Za-z0-9]/.test(pw)) s++;
+  return pw.length < 10 ? 0 : Math.min(4, Math.max(1, s - 0));
+}
+function showPwReq() {
+  $("#pwreq").hidden = false; document.body.style.overflow = "hidden";
+  $("#pr-user").value = ME.username;
+  setTimeout(() => $("#pr-cur").focus(), 30);
+}
+$("#pr-new").addEventListener("input", () => {
+  const pw = $("#pr-new").value, l = strengthOf(pw);
+  $("#pr-meter").style.width = pw ? `${l === 0 ? 8 : l * 25}%` : "0"; $("#pr-meter").dataset.l = String(l);
+  $("#pr-strength").textContent = !pw ? "" : l === 0 ? "Too short: at least 10 characters" : ["", "Weak", "Okay", "Good", "Strong"][l];
+});
+$("#prform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#pr-msg"), cur = $("#pr-cur").value, nw = $("#pr-new").value, rep = $("#pr-rep").value;
+  const fail = (t) => { msg.hidden = false; msg.textContent = t; };
+  msg.hidden = true;
+  if (!cur) return fail("Enter the temporary password you just signed in with.");
+  if (nw !== rep) return fail("The two new passwords do not match.");
+  if (nw.length < 10) return fail("Your new password must be at least 10 characters.");
+  try {
+    await api("/api/me/password", { method: "POST", body: { current: cur, new: nw } });
+    msg.hidden = true;
+    location.reload();                    // the page restarts without the lock (and the browser can offer to save the new password)
+  } catch (err) { fail(err.message); }
+});
+
 // ------------------------------------------------------------------ welcome tour: what EvilEye is, then choose your ROCU region
 const ob = { region: "", data: null, step: 1 };
 const obEl = $("#onboard");
@@ -805,7 +843,7 @@ $("#usermenu").addEventListener("click", () => {
   $("#modal-title").textContent = ME.username;
   $("#modal-explain").textContent = `${ME.role === "admin" ? "Administrator" : "User"} · ${ME.database ? "activity is logged" : "database not connected"}`;
   $("#modal-body").innerHTML = ME.database ? `<h3 class="sub">Change password</h3>
-    <form id="mypw" class="form-row">
+    <form id="mypw" class="form-row"><input class="sr-only-input" type="text" name="username" value="${esc(ME.username)}" autocomplete="username" tabindex="-1" aria-hidden="true">
       <label class="field">Current password<input id="pw-cur" class="search" type="password" required autocomplete="current-password"></label>
       <label class="field">New password (10+ characters)<input id="pw-new" class="search" type="password" minlength="10" required autocomplete="new-password"></label>
       <label class="field">Repeat new password<input id="pw-rep" class="search" type="password" minlength="10" required autocomplete="new-password"></label>
@@ -923,6 +961,7 @@ $("#refresh-now").addEventListener("click", async () => {
 
 async function init() {
   try { ME = await api("/api/me"); } catch (e) { return; }
+  if (ME.must_change) { showPwReq(); return; }        // nothing else works until the password has been changed
   const h = readHash();
   region = ME.region || "";
   if (h.region && ME.regions.includes(h.region)) region = h.region;        // a shared link filters the view without changing your saved region
