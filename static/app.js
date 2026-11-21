@@ -623,7 +623,6 @@ $("#arefresh").addEventListener("click", loadAlerts);
     const on = want && !!lock;
     btn.setAttribute("aria-pressed", String(on));
     btn.setAttribute("aria-label", on ? "Screen is kept on: click to turn off" : "Keep screen on");
-    btn.title = on ? "Screen is kept on (click the eye to turn off)" : "Keep screen on (click the eye)";
     if (fav) fav.href = on ? "/static/favicon-on.png" : "/static/favicon.png";
   }
   async function acquire() {
