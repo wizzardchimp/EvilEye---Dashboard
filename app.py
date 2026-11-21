@@ -143,6 +143,15 @@ def _apply_geo(victims):
 
 
 # ----------------------------------------------------------------- ingest
+def _abs_url(link, base):
+    """RansomLook gives relative links ("/post/<id>"): make them point at its site, never at ours."""
+    link = (link or "").strip()
+    if not link:
+        return ""
+    u = urljoin(base, link)
+    return u if urlparse(u).scheme in ("http", "https") else ""
+
+
 def _plain(text, limit=300):
     """Tags removed, HTML entities decoded (some feeds double-encode them) and whitespace collapsed."""
     t = text or ""
@@ -166,7 +175,7 @@ def _rss(url, source, kind, limit=25, skip=None):
             pub = parsedate_to_datetime(it.findtext("pubDate")).astimezone(timezone.utc).isoformat()
         except Exception:
             pub = None
-        out.append({"title": title, "source": source, "kind": kind, "url": (it.findtext("link") or "").strip(),
+        out.append({"title": title, "source": source, "kind": kind, "url": _abs_url(it.findtext("link"), url),
                     "summary": _plain(it.findtext("description")), "published": pub, "extra": {}})
         if len(out) >= limit:
             break
@@ -303,7 +312,7 @@ def _news_feed(fid, url, name, weight):
     out = []
     for it in root.iter("item"):
         title = _plain(it.findtext("title"), 300)
-        link = (it.findtext("link") or "").strip()
+        link = _abs_url(it.findtext("link"), url)          # http(s) only, never relative, never javascript:
         if not title or not link:
             continue
         try:
@@ -439,7 +448,7 @@ def _ingest():
         for v in _get("https://api.ransomware.live/v2/recentvictims"):
             if v.get("press"):
                 intel.append({"title": v.get("victim") or "", "source": "ransomware.live", "kind": "press",
-                              "summary": (v.get("description") or "")[:260], "url": v.get("url") or "",
+                              "summary": (v.get("description") or "")[:260], "url": _abs_url(v.get("url"), "https://www.ransomware.live/"),
                               "published": v.get("discovered"), "extra": {}})
         stamps["rl_recent"] = _now_iso()
     except Exception as e:
@@ -452,7 +461,7 @@ def _ingest():
             if n_rl < 30:
                 n_rl += 1
                 intel.append({"title": v.get("post_title") or "", "source": "ransomlook", "kind": "leak-post",
-                              "summary": (v.get("description") or "")[:260], "url": v.get("link") or "",
+                              "summary": (v.get("description") or "")[:260], "url": _abs_url(v.get("link"), "https://www.ransomlook.io/"),
                               "published": (v.get("discovered") or "").replace(" ", "T"), "extra": {}})
         stamps["ransomlook"] = _now_iso()
     except Exception as e:
@@ -588,7 +597,8 @@ def is_stale():
 # ----------------------------------------------------------------- users, sessions, activity
 DUMMY_HASH = generate_password_hash("not-a-real-password")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
-EVENTS_FROM_CLIENT = {"tab_view", "search", "filter", "region_change", "copy_leak_site", "export", "modal_open", "victim_view"}
+EVENTS_FROM_CLIENT = {"tab_view", "search", "filter", "region_change", "copy_leak_site", "export", "modal_open", "victim_view",
+                     "screen_wake_on", "screen_wake_off", "screen_wake_failed", "link_click"}
 _rate = defaultdict(deque)
 
 
@@ -845,7 +855,7 @@ def api_activity():
     if len(q) >= 120:
         return jsonify(error="rate limited"), 429
     q.append(now)
-    log(ev, str(b.get("detail", ""))[:200])
+    log(ev, str(b.get("detail", ""))[:300])
     return jsonify(ok=True)
 
 

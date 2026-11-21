@@ -483,3 +483,6 @@ select.search { flex: 0 1 210px; }
 .uk-grid .news-item:first-child { padding-top: 11px; border-top: 1px solid var(--border); }
 .uk-grid .news-item:nth-child(-n+2) { border-top: 0; padding-top: 2px; }
 @media (max-width: 760px) { .uk-grid .news-item:nth-child(2) { border-top: 1px solid var(--border); padding-top: 11px; } }
+
+/* long addresses in log rows wrap instead of widening the table */
+.table td { overflow-wrap: anywhere; }

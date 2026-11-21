@@ -13,6 +13,8 @@ function ago(iso) {
 }
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const sk = (n = 5) => Array.from({ length: n }, () => '<div class="sk"></div>').join("");
+// only ever put web links into href attributes (a feed entry could carry javascript: or similar)
+const safeHref = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
 const isDomain = (s) => /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(\/.*)?$/i.test(s || "");
 
 // ------------------------------------------------------------------ theme: dark (default) or inverted light, remembered per browser
@@ -43,7 +45,7 @@ async function api(path, opts = {}) {
 // what you do is logged for the admin (tab views, searches, filters, copies); fire and forget
 function track(event, detail) {
   fetch("/api/activity", { method: "POST", headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" },
-    body: JSON.stringify({ event, detail: String(detail ?? "").slice(0, 200) }) }).catch(() => {});
+    body: JSON.stringify({ event, detail: String(detail ?? "").slice(0, 300) }) }).catch(() => {});
 }
 const rq = (extra = {}) => { const p = new URLSearchParams(extra); if (region) p.set("rocu", region); return p; };
 
@@ -82,7 +84,7 @@ window.addEventListener("hashchange", () => {
   const h = readHash();
   const r = h.region && ME.regions.includes(h.region) ? h.region : (ME.region || "");
   if (r !== region) { region = r; $("#region").value = r; applyRegionChange(false); }
-  if (h.tab && h.tab !== activeTab()) showTab(h.tab, false);
+  if (h.tab && h.tab !== activeTab()) { showTab(h.tab, false); track("tab_view", `${h.tab} (shared link)`); }
 });
 
 // ------------------------------------------------------------------ health / status
@@ -217,8 +219,9 @@ function newsItemHTML(n, withSummary) {
   const themes = (n.themes || []).slice(0, 3).map((t) => `<span class="badge src">${esc(t)}</span>`).join(" ");
   const groups = (n.groups || []).map((g) => `<span class="badge grp">${esc(g)}</span>`).join(" ");
   // the thumbnail is fetched, checked and shrunk by the server: your browser never contacts the news site
-  const img = n.thumb ? `<a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><img class="thumb" loading="lazy" decoding="async" width="132" height="88" alt="" src="/api/news/thumb/${esc(n.id)}"></a>` : "";
-  return `<div class="news-item">${img}<div class="nbody"><a class="nt" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a>
+  const url = safeHref(n.url);
+  const img = n.thumb && url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><img class="thumb" loading="lazy" decoding="async" width="132" height="88" alt="" src="/api/news/thumb/${esc(n.id)}"></a>` : "";
+  return `<div class="news-item">${img}<div class="nbody">${url ? `<a class="nt" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a>` : `<span class="nt">${esc(n.title)}</span>`}
     <div class="meta"><span class="badge uk">${esc(n.source_name)}</span> ${ago(n.published)} ${themes} ${groups}${n.uk ? ' <span class="badge wm">UK</span>' : ""}</div>
     ${withSummary && n.summary ? `<div class="sum">${esc(n.summary.slice(0, 200))}${n.summary.length > 200 ? "…" : ""}</div>` : ""}</div></div>`;
 }
@@ -387,7 +390,7 @@ function openVictim(v) {
       ${v.reposts ? `<dt>Re-posted</dt><dd>${v.reposts} more time${v.reposts === 1 ? "" : "s"} by the same group</dd>` : ""}
     </dl>
     ${v.description ? `<div><div class="sect">Description (from ransomware.live)</div><div class="desc">${esc(v.description)}</div></div>` : ""}
-    ${v.post_url ? `<div><div class="sect">Leak-site post (copy only, never opened from here)</div><button type="button" class="copy" data-copy="${esc(v.post_url)}" data-gang="${esc(v.group)}"><span class="addr">${esc(v.post_url)}</span><span class="cpy">copy</span></button></div>` : ""}
+    ${v.post_url ? `<div><div class="sect">Leak-site post (copy only, never opened from here)</div><button type="button" class="copy" data-copy="${esc(v.post_url)}" data-gang="${esc(v.group)}" data-log="${esc("Victim " + v.post_title + " (" + v.group + "): " + v.post_url)}"><span class="addr">${esc(v.post_url)}</span><span class="cpy">copy</span></button></div>` : ""}
     ${canEdit ? `<div><div class="sect">Admin: set region</div>
       <form id="plform" class="form-row">
         <label class="field">Region<select id="pl-rocu" class="search">${ME.regions.filter((r) => r !== "Unplaced").map((r) => `<option ${r === v.rocu ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
@@ -519,7 +522,7 @@ async function loadGangs() {
       const sites = (g.leak_sites || []).map((s) => {
         const ok = s.available === true || s.status === "ONLINE";
         const addr = s.slug || s.fqdn || "";
-        return `<div class="site-line"><span class="dot ${s.available === false || s.status === "OFFLINE" ? "bad" : ok ? "ok" : "na"}"></span>${addr ? `<button type="button" class="copy" data-copy="${esc(addr)}" data-gang="${esc(g.name)}" title="Click to copy. Never opened from here."><span class="addr">${esc(addr)}</span><span class="cpy">copy</span></button>` : "site"}</div>`;
+        return `<div class="site-line"><span class="dot ${s.available === false || s.status === "OFFLINE" ? "bad" : ok ? "ok" : "na"}"></span>${addr ? `<button type="button" class="copy" data-copy="${esc(addr)}" data-gang="${esc(g.name)}" data-log="${esc("Gang catalog, " + g.name + ": " + addr)}" title="Click to copy. Never opened from here."><span class="addr">${esc(addr)}</span><span class="cpy">copy</span></button>` : "site"}</div>`;
       });
       const meta = [g.added_date ? `tracked since ${esc(g.added_date)}` : "", g.activity ? `${g.activity} UK victim${g.activity === 1 ? "" : "s"}${region ? ` in ${esc(region)}` : ""}` : ""].filter(Boolean);
       return `<div class="gc">
@@ -547,10 +550,24 @@ async function loadAlerts() {
           <div><div class="ptitle">${esc(item.title)}</div>
             <div class="pdetail"><span class="badge src">${esc(item.source)}</span> <span class="badge grp">${esc(item.kind)}</span>
               ${item.extra?.cve ? esc(item.extra.cve) + " " : ""}${item.extra?.vendor ? esc(item.extra.vendor) + " " : ""}${item.summary ? esc(item.summary.slice(0, 220)) : ""}</div></div>
-          <div class="right"><div class="pdate">${fmtDate(item.published)}</div>${item.url ? `<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">view→</a>` : ""}</div>
+          <div class="right"><div class="pdate">${fmtDate(item.published)}</div>${safeHref(item.url) ? `<a href="${esc(safeHref(item.url))}" target="_blank" rel="noopener noreferrer">view→</a>` : ""}</div>
         </div>`).join("") : '<div class="ldr">no alerts yet — still syncing</div>';
   } catch (e) { list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
 }
+
+// ------------------------------------------------------------------ outbound link clicks are logged (where, and where to)
+const linkContext = (a) => a.closest(".drawer") ? "victim details" : a.closest(".news-item") ? "news" : a.closest("#tab-alerts") ? "alerts"
+  : a.closest("#tab-victims") ? "victims" : a.closest("#tab-news") ? "news page" : a.closest(".foot") ? "footer" : "page";
+function logLink(e) {
+  const a = e.target.closest && e.target.closest("a[href]");
+  if (!a) return;
+  let u; try { u = new URL(a.href, location.href); } catch (err) { return; }
+  if (u.origin === location.origin || !/^https?:$/.test(u.protocol)) return;
+  const label = (a.textContent || "").trim().replace(/\s+/g, " ").slice(0, 70);
+  track("link_click", `${linkContext(a)}: ${label ? label + " → " : ""}${u.host}${u.pathname}`);      // query strings are not logged
+}
+document.addEventListener("click", logLink, true);
+document.addEventListener("auxclick", logLink, true);       // middle-click opens a new tab too
 
 // ------------------------------------------------------------------ click to copy
 function toast(msg) {
@@ -576,7 +593,7 @@ document.addEventListener("click", async (e) => {
   const label = b.querySelector(".cpy");
   if (ok) {
     b.classList.add("done"); if (label) label.textContent = "copied";
-    toast("Copied to clipboard"); track("copy_leak_site", b.dataset.gang || "");
+    toast("Copied to clipboard"); track("copy_leak_site", b.dataset.log || b.dataset.gang || b.dataset.copy);
     setTimeout(() => { b.classList.remove("done"); if (label) label.textContent = "copy"; }, 1400);
   } else toast("Copy failed: select the text manually");
 });
@@ -697,7 +714,7 @@ async function loadActivity(more) {
   try {
     const d = await api(`/api/admin/activity?${actParams({ limit: "100", offset: String(actOffset) })}`);
     const keepU = $("#act-user").value, keepE = $("#act-event").value;
-    if ($("#act-user").options.length <= 1) {
+    if ($("#act-user").options.length <= 1 || $("#act-event").options.length - 1 !== d.events.length) {
       $("#act-user").innerHTML = '<option value="">All users</option>' + d.users.map((u) => `<option>${esc(u)}</option>`).join("");
       $("#act-event").innerHTML = '<option value="">All events</option>' + d.events.map((u) => `<option>${esc(u)}</option>`).join("");
       $("#act-user").value = keepU; $("#act-event").value = keepE;
@@ -779,17 +796,21 @@ document.addEventListener("keydown", (e) => {
     btn.setAttribute("aria-label", on ? "Screen is kept on: click to turn off" : "Keep screen on");
     if (fav) fav.href = on ? "/static/favicon-on.png" : "/static/favicon.png";
   }
+  let failReason = "";
   async function acquire() {
-    if (!navigator.wakeLock) { want = false; store(false); paint(); toast("This browser cannot keep the screen awake."); return false; }
+    failReason = "";
+    if (!navigator.wakeLock) { failReason = "browser does not support it"; want = false; store(false); paint(); toast("This browser cannot keep the screen awake."); return false; }
     try { lock = await navigator.wakeLock.request("screen"); lock.addEventListener("release", () => { lock = null; paint(); }); }
-    catch (err) { lock = null; toast(err.message || "Screen wake was denied by the browser."); }
+    catch (err) { lock = null; failReason = err.message || "denied by the browser"; toast(failReason); }
     paint(); return !!lock;
   }
   async function setAwake(on) {
     want = on; store(on);
     if (!on && lock) { await lock.release(); lock = null; }
-    if (on) { if (await acquire()) toast("Screen will stay on while this tab is visible"); }
-    else { paint(); toast("Screen wake off"); }
+    if (on) {
+      if (await acquire()) { toast("Screen will stay on while this tab is visible"); track("screen_wake_on", "keep screen on"); }
+      else track("screen_wake_failed", failReason);
+    } else { paint(); toast("Screen wake off"); track("screen_wake_off", "screen wake released"); }
   }
   btn.addEventListener("click", () => setAwake(!(want && lock)));
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && want) acquire(); });
@@ -841,7 +862,7 @@ async function init() {
   // record this visit first so "new since your last visit" is measured against the previous one
   let refreshing = false;
   try { const o = await api("/api/open", { method: "POST" }); ME.prev_visit = o.prev_visit; refreshing = o.refreshing; } catch (e) { /* offline: show cached data */ }
-  if (h.tab && document.querySelector(`.tab[data-tab="${h.tab}"]`) && h.tab !== "overview") showTab(h.tab, false); else { updateFilterBar(); syncHash(); loadOverview(); }
+  if (h.tab && document.querySelector(`.tab[data-tab="${h.tab}"]`) && h.tab !== "overview") { showTab(h.tab, false); track("tab_view", `${h.tab} (shared link)`); } else { updateFilterBar(); syncHash(); loadOverview(); }
   loadHealth(); loadTicker();
   if (refreshing) await waitForRefresh();
   await loadHealth();

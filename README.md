@@ -69,8 +69,11 @@ user's preference, which drives the "Latest in <region>" ticker. Alerts & News a
 Accounts live in PostgreSQL (`DATABASE_URL`). The first admin is created from `EVILEYE_ADMIN_USER` (default `admin`) and
 `EVILEYE_PASSWORD` when the users table is empty. After that, admins add, disable, delete and reset users on the
 **Users** tab, and read the log on the **Activity** tab (filter by user and event, export CSV).
-Logged: logins, failed logins, logouts, page opens, refreshes, tab views, searches, filters, region changes, copies of
-gang leak-site addresses, password changes and all admin actions.
+Logged: logins, failed logins, logouts, page opens, refreshes, tab views (including pages reached by a shared link), searches,
+filters, region changes, victim details opened, **screen wake on / off / failed** (with the browser's reason), **outbound links
+clicked** (where it was clicked and the destination host and path, query strings are not kept), **leak-site addresses copied**
+(the gang or victim and the exact address), password changes and all admin actions. Feed-supplied links are only ever used as
+http(s) links.
 Passwords are salted scrypt hashes, 10+ characters. A username locks for 15 minutes after 6 failed logins. Changing or
 resetting a password signs that user out everywhere.
 
