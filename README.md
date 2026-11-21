@@ -17,7 +17,7 @@ Items from the news feeds are kept when they are dark-web relevant (Dark Web Inf
 ransomware groups named (matched against the gang catalogue; everyday-word names need a capital letter and ransomware context)
 and UK mentions. The welcome page shows the top three (score minus a small recency penalty, at most two per source). The
 **Dark Web News** tab opens with a visual briefing: a one-line headline, a trend chip, icon-led key points (volume, leading themes,
-ransomware groups named, Dark Web Informer claims, UK mentions, busiest day), a theme donut with legend and a per-day chart. Click
+ransomware groups named, Dark Web Informer claims, UK mentions) and a theme donut with legend. Click
 a donut segment, a legend row or a ransomware group to filter the list below (removable chips show what is applied). It is
 rule-based, built from headlines, categories and group names, and does not read the articles. The week-on-week trend only compares
 sources whose feed reaches back across both windows, and says "no trend yet" otherwise.

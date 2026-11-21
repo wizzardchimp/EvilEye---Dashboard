@@ -1353,9 +1353,6 @@ def api_news_summary():
     dwi = [n for n in cur if n["source"] == "darkwebinformer"]
     dwi_cats = Counter(c for n in dwi for c in n["cats"])
     uk = [n for n in cur if n["uk"]]
-    daily = Counter((_ts(n["published"]).date()) for n in cur)
-    series = [{"date": (now.date() - timedelta(days=i)).isoformat(), "count": daily.get(now.date() - timedelta(days=i), 0)}
-              for i in range(days - 1, -1, -1)]
     # Feeds hold different amounts of history (some a few days, some weeks). A week-on-week change is only honest for
     # sources whose feed reaches back across BOTH windows, so compare just those.
     oldest = {}
@@ -1370,8 +1367,6 @@ def api_news_summary():
     change = round(100 * (c_deep - p_deep) / p_deep) if p_deep and c_deep is not None and deep else None
     th = themes.most_common()
     claims = sum(c for k, c in dwi_cats.items() if re.search(r"breach|leak", k, re.I))
-    busy = max(series, key=lambda x: x["count"]) if series else {"count": 0}
-    busy_label = datetime.fromisoformat(busy["date"]).strftime("%a %d %b") if busy["count"] else ""
     trend = (f"{'up' if change >= 0 else 'down'} {abs(change)}% on the previous {days} days" if change is not None else None)
     # structured points (icon key, label, text) for the page, plus a one-line headline
     points, headline = [], ""
@@ -1388,18 +1383,16 @@ def api_news_summary():
         if dwi:
             points.append({"k": "claims", "label": "Dark Web Informer", "text": f"{len(dwi)} posts, {claims} of them data breach or leak claims"})
         points.append({"k": "uk", "label": "UK", "text": f"{len(uk)} item{'s' if len(uk) != 1 else ''} mention the UK" if uk else "No items mention the UK"})
-        if busy["count"]:
-            points.append({"k": "busy", "label": "Busiest day", "text": f"{busy_label}: {busy['count']} items"})
     else:
         headline = f"No dark web news in the last {days} days yet"
     briefing = " ".join([headline + "."] + [f"{p['label']}: {p['text']}." for p in points]) if cur else headline + ": refresh to load the feeds."
     return jsonify(days=days, total=len(cur), previous=len(prev), change=change, comparable_sources=coverage, briefing=briefing,
-                   headline=headline, points=points, delta=trend, busiest={"label": busy_label, "count": busy["count"]},
+                   headline=headline, points=points, delta=trend,
                    themes=[{"theme": t, "count": c, "share": _share(c, len(cur))} for t, c in th],
                    groups=[{"group": g_, "count": c} for g_, c in groups.most_common(8)],
                    sources=[{"source": s, "count": c} for s, c in sources.most_common()],
                    claim_types=[{"type": k, "count": c} for k, c in dwi_cats.most_common(6)],
-                   uk_count=len(uk), uk_items=[_news_public(n) for n in uk[:4]], series=series,
+                   uk_count=len(uk), uk_items=[_news_public(n) for n in uk[:4]],
                    note="Built from headlines, categories and ransomware-group names. It does not read the articles.")
 
 

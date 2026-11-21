@@ -444,7 +444,6 @@ const POINT_ICON = {
   groups: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   claims: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
   uk: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
-  busy: '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
 };
 const HOT_POINTS = new Set(["groups", "uk"]);
 function donut(themes, total) {
@@ -471,10 +470,6 @@ function renderNewsSummary(s) {
   $("#n-headline").textContent = s.headline;
   $("#n-points").innerHTML = s.points.map((p) => `<li><span class="ic${HOT_POINTS.has(p.k) ? " hot" : ""}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${POINT_ICON[p.k] || ""}</svg></span><div><div class="lbl">${esc(p.label)}</div><div class="txt">${esc(p.text)}</div></div></li>`).join("");
   donut(s.themes, s.total);
-  drawTrend($("#n-daily"), s.series.map((x) => ({ week: x.date, count: x.count })), (x, long) => {
-    const d = new Date(x.week + "T00:00:00Z"); return long ? d.toUTCString().slice(0, 11) : s.series.length > 14 ? d.getUTCDate() : d.toUTCString().slice(0, 3);
-  }, false);
-  $("#n-peak").textContent = s.busiest.count ? `Busiest: ${s.busiest.label} (${s.busiest.count} items)` : "";
   $("#n-note").textContent = s.note;
   $("#n-stats").innerHTML = [["Items tracked", s.total, ""], ["Sources reporting", s.sources.length, ""], ["Mention the UK", s.uk_count, "hl"],
     ["Ransomware groups named", s.groups.length, ""]].map(([l, n, c]) => `<div class="stat ${c}"><div class="num">${n}</div><div class="label">${l}</div></div>`).join("");

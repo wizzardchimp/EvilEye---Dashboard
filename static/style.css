@@ -438,7 +438,7 @@ select.search { flex: 0 1 210px; }
 .news-top { margin-bottom: 18px; }
 
 /* ---------- dark web briefing ---------- */
-.brief { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 24px 28px; align-items: start; margin-bottom: 10px; }
+.brief { display: grid; grid-template-columns: 1.5fr 1fr; gap: 24px 36px; align-items: start; margin-bottom: 10px; }
 .brief .sect-t { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
 .brief-kicker { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .kick { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
@@ -467,12 +467,11 @@ select.search { flex: 0 1 210px; }
 .lg.on { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--text); }
 .lg i { width: 11px; height: 11px; border-radius: 3px; }
 .lg b { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
-.brief-days .trend { height: 150px; }
 .hint.brief-note { margin: 0 0 16px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 3px 4px 3px 11px; border-radius: 999px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); color: var(--text); }
 .chip button { background: var(--surface); border: 1px solid var(--border-strong); color: var(--text-2); border-radius: 999px; width: 20px; height: 20px; line-height: 1; cursor: pointer; font-size: 13px; padding: 0; }
-@media (max-width: 1000px) { .brief { grid-template-columns: 1fr 1fr; } .brief-main { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .brief { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .brief { grid-template-columns: 1fr; } .brief-headline { font-size: 19px; } }
 
 /* a 'Load more' / pager paragraph under a list never sits flush against it */
