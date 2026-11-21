@@ -44,6 +44,10 @@ create table if not exists placement_overrides (
     set_by    text not null default '',
     set_at    timestamptz not null default now()
 );
+
+alter table users add column if not exists last_visit timestamptz;
+alter table users add column if not exists prev_visit timestamptz;
+alter table placement_overrides add column if not exists town text not null default '';
 """
 
 

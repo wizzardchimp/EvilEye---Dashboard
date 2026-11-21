@@ -11,26 +11,22 @@ function ago(iso) {
   if (m < 60 * 24) return `${Math.round(m / 60)}h ago`;
   return `${Math.round(m / 1440)}d ago`;
 }
-function debounce(fn, ms) {
-  let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
-}
+const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const sk = (n = 5) => Array.from({ length: n }, () => '<div class="sk"></div>').join("");
+const isDomain = (s) => /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(\/.*)?$/i.test(s || "");
 
 // ------------------------------------------------------------------ theme: dark (default) or inverted light, remembered per browser
 const root = document.documentElement;
 function setTheme(t) {
   if (t === "light") root.dataset.theme = "light"; else delete root.dataset.theme;
   try { localStorage.setItem("evileye-theme", t); } catch (e) { /* storage unavailable */ }
-  const b = document.getElementById("theme");
-  if (b) {
-    b.setAttribute("aria-pressed", String(t === "light"));
-    b.title = t === "light" ? "Switch back to the dark theme" : "Invert colour scheme (light theme)";
-  }
+  const b = $("#theme");
+  if (b) { b.setAttribute("aria-pressed", String(t === "light")); b.title = t === "light" ? "Switch back to the dark theme" : "Invert colour scheme (light theme)"; }
 }
-document.getElementById("theme").addEventListener("click", () => setTheme(root.dataset.theme === "light" ? "dark" : "light"));
+$("#theme").addEventListener("click", () => setTheme(root.dataset.theme === "light" ? "dark" : "light"));
 setTheme(root.dataset.theme === "light" ? "light" : "dark");
 
-let ME = null;       // { username, role, region, database, regions }
+let ME = null;       // { username, role, region, database, regions, prev_visit }
 let region = "";     // selected ROCU region ("" = all UK); this is also the user's saved preference
 
 // ------------------------------------------------------------------ api
@@ -44,29 +40,50 @@ async function api(path, opts = {}) {
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
   return j;
 }
-// what you did is logged for the admin (tab views, searches, filters, copies); fire and forget
+// what you do is logged for the admin (tab views, searches, filters, copies); fire and forget
 function track(event, detail) {
   fetch("/api/activity", { method: "POST", headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" },
     body: JSON.stringify({ event, detail: String(detail ?? "").slice(0, 200) }) }).catch(() => {});
 }
-const rq = (extra = {}) => {
-  const p = new URLSearchParams(extra);
-  if (region) p.set("rocu", region);
-  return p;
-};
+const rq = (extra = {}) => { const p = new URLSearchParams(extra); if (region) p.set("rocu", region); return p; };
 
-// ------------------------------------------------------------------ tabs
-const TABS = { overview: loadOverview, victims: loadVictims, posts: loadPosts, gangs: loadGangs, alerts: loadAlerts, users: loadUsers, activity: loadActivity };
+// ------------------------------------------------------------------ tabs, filter bar and shareable links
+const TABS = { overview: loadOverview, victims: loadVictims, news: loadNews, gangs: loadGangs, alerts: loadAlerts, users: loadUsers, activity: loadActivity };
+const REGION_TABS = ["overview", "victims", "gangs"];
 const activeTab = () => document.querySelector(".tab.active").dataset.tab;
-document.querySelectorAll(".tab").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === btn));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`));
-    track("tab_view", btn.dataset.tab);
-    refreshCurrent();
-  });
-});
+function showTab(name, fromClick) {
+  const btn = document.querySelector(`.tab[data-tab="${name}"]`);
+  if (!btn || btn.hidden) return;
+  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === btn));
+  document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
+  if (fromClick) track("tab_view", name);
+  updateFilterBar(); syncHash(); refreshCurrent();
+}
+document.querySelectorAll(".tab").forEach((btn) => btn.addEventListener("click", () => showTab(btn.dataset.tab, true)));
 function refreshCurrent() { (TABS[activeTab()] || loadOverview)(); }
+function updateFilterBar() {
+  const show = region && REGION_TABS.includes(activeTab());
+  $("#filterbar").hidden = !show;
+  if (show) $("#fb-region").textContent = region === "Unplaced" ? "region unknown" : region;
+}
+function syncHash() {
+  const p = new URLSearchParams({ tab: activeTab() });
+  if (region) p.set("region", region);
+  try { history.replaceState(null, "", "#" + p.toString()); } catch (e) { /* ignore */ }
+}
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  return { tab: p.get("tab"), region: p.get("region") };
+}
+$("#fb-clear").addEventListener("click", () => pickRegion(""));
+// a shared link pasted into an already-open tab only changes the hash: follow it (view only, the saved region is untouched)
+window.addEventListener("hashchange", () => {
+  if (!ME) return;
+  const h = readHash();
+  const r = h.region && ME.regions.includes(h.region) ? h.region : (ME.region || "");
+  if (r !== region) { region = r; $("#region").value = r; applyRegionChange(false); }
+  if (h.tab && h.tab !== activeTab()) showTab(h.tab, false);
+});
 
 // ------------------------------------------------------------------ health / status
 async function loadHealth() {
@@ -79,10 +96,7 @@ async function loadHealth() {
     else if (h.errors) el.innerHTML = '<span class="err">ingest error on first sync; retrying…</span>';
     else el.innerHTML = '<span class="ok">connected</span>';
     return h;
-  } catch (e) {
-    $("#last-updated").innerHTML = '<span class="err">offline</span>';
-    return {};
-  }
+  } catch (e) { $("#last-updated").innerHTML = '<span class="err">offline</span>'; return {}; }
 }
 
 // ------------------------------------------------------------------ region selector (the header filter)
@@ -90,13 +104,22 @@ function buildRegionSelect() {
   $("#region").innerHTML = '<option value="">All UK</option>' + ME.regions.map((r) => `<option>${esc(r)}</option>`).join("");
   $("#region").value = region;
 }
+function applyRegionChange(save) {
+  ME.region = save ? region : ME.region;
+  facetsFilled = false; vm.page = 0;
+  updateFilterBar(); syncHash(); loadTicker(); refreshCurrent();
+}
 $("#region").addEventListener("change", async () => {
   region = $("#region").value;
   try { await api("/api/me/region", { method: "PUT", body: { region } }); } catch (e) { toast("Could not save your region: " + e.message); }
-  ME.region = region;
-  loadTicker();
-  refreshCurrent();
+  applyRegionChange(true);
 });
+function pickRegion(r) { $("#region").value = r; $("#region").dispatchEvent(new Event("change")); }
+
+// ------------------------------------------------------------------ victim label helpers
+const placed = (v) => v.rocu && v.rocu !== "Unplaced" && v.rocu !== "Overseas / not UK";
+const townLabel = (v) => (v.town && placed(v) ? ` <span class="town">(${esc(v.town)})</span>` : "");
+const newBadge = (v) => (v.new ? ' <span class="badge new">NEW</span>' : "");
 
 // ------------------------------------------------------------------ ticker (reads the server's cache; no external calls)
 let tickerSeen = new Set();
@@ -104,7 +127,8 @@ const sectorShort = (s) => (s && s !== "Unclassified" ? s : "");
 function tickerItem(x, showRegion, fresh) {
   const meta = [`<span class="badge grp">${esc(x.group)}</span>`, esc(sectorShort(x.sector)), ago(x.seen)].filter(Boolean).join(" · ");
   const reg = showRegion ? `<span class="badge ${x.rocu === "Unplaced" ? "src" : "uk"}">${esc(x.rocu === "Unplaced" ? "region unknown" : x.rocu)}</span>` : "";
-  return `<li class="${fresh ? "fresh" : ""}"><div class="tk-title">${esc(x.title)} ${reg}</div><div class="meta">${meta}</div></li>`;
+  const t = x.town && placed(x) ? ` <span class="town">(${esc(x.town)})</span>` : "";
+  return `<li class="${fresh ? "fresh" : ""}"><div class="tk-title">${esc(x.title)}${t} ${reg}${x.new ? ' <span class="badge new">NEW</span>' : ""}</div><div class="meta">${meta}</div></li>`;
 }
 async function loadTicker() {
   try {
@@ -123,39 +147,43 @@ async function loadTicker() {
 setInterval(() => { if (document.visibilityState === "visible" && activeTab() === "overview") loadTicker(); }, 60000);
 
 // ------------------------------------------------------------------ overview
-function pickRegion(r) {
-  $("#region").value = r;
-  $("#region").dispatchEvent(new Event("change"));
-}
-$("#chart-regions").addEventListener("click", (e) => {
-  const t = e.target.closest(".rtile");
-  if (t) pickRegion(t.dataset.region === region ? "" : t.dataset.region);   // click the selected tile again to clear
-});
+function pickRegionTile(r) { pickRegion(r === region ? "" : r); }
+$("#chart-regions").addEventListener("click", (e) => { const t = e.target.closest(".rtile"); if (t) pickRegionTile(t.dataset.region); });
 $("#region-clear").addEventListener("click", () => pickRegion(""));
-// spread the tiles evenly over as few rows as fit (e.g. 14 tiles -> 7 + 7, not 8 + 6)
 function balanceStrip() {
   const el = $("#chart-regions"), n = el.children.length;
   if (!n || !el.clientWidth) return;
   const fit = Math.max(1, Math.floor((el.clientWidth + 10) / 142));
-  const rows = Math.ceil(n / fit);
-  el.style.setProperty("--cols", Math.ceil(n / rows));
+  el.style.setProperty("--cols", Math.ceil(n / Math.ceil(n / fit)));       // 14 tiles -> 7 + 7, not 8 + 6
 }
 window.addEventListener("resize", debounce(balanceStrip, 150));
+
+function drawTrend(holder, series, labelFn, curLast) {
+  const max = Math.max(1, ...series.map((s) => s.count));
+  holder.innerHTML = series.map((s, i) => `
+    <div class="col${curLast && i === series.length - 1 ? " cur" : ""}" title="${esc(labelFn(s, true))}: ${s.count}">
+      <span class="val">${s.count}</span><div class="bar" style="height:${Math.max(2, (s.count / max) * 82)}%"></div><span class="lab">${esc(labelFn(s, false))}</span>
+    </div>`).join("");
+}
+const weekLabel = (s, long) => { const d = new Date(s.week + "T00:00:00Z"); return long ? `Week of ${d.toUTCString().slice(5, 11)}` : d.toUTCString().slice(5, 11).replace(/^0/, ""); };
+
 async function loadOverview() {
   const holder = $("#stat-cards");
   const [y, g, s, rg] = ["chart-year", "chart-gangs", "chart-sectors", "chart-regions"].map((i) => $(`#${i}`));
-  y.innerHTML = g.innerHTML = s.innerHTML = '<div class="ldr">loading…</div>';
+  if (!holder.children.length) { y.innerHTML = g.innerHTML = s.innerHTML = sk(6); }
+  loadNewsTop(); loadTrend();
   try {
     const d = await api(`/api/summary?${rq()}`);
     holder.innerHTML = [
-      [region ? `${region} victims` : "UK victims", d.uk_total, region ? "hl" : ""],
+      [region ? `${region === "Unplaced" ? "Unplaced" : region} victims` : "UK victims", d.uk_total, region ? "hl" : ""],
       ["UK victims (all regions)", d.uk_all, ""],
-      ["Recent attacks tracked", d.attacks_total, ""],
+      ["Dark web news (7 days)", d.news_7d, ""],
       ["Gangs tracked", d.gangs_total, ""],
     ].map(([label, num, cls]) => `<div class="stat ${cls}"><div class="num">${num ?? 0}</div><div class="label">${label}</div></div>`).join("");
     drawBars(y, d.by_year.map((r) => [r.year, r.count]));
     drawBars(g, d.top_gangs.map((r) => [r.group, r.count]));
     drawBars(s, d.top_sectors.map((r) => [r.sector, r.count]));
+    $("#sector-note").textContent = `${d.unclassified.count} victim${d.unclassified.count === 1 ? "" : "s"} (${d.unclassified.share}%) unclassified and not ranked. ${d.sector_source}`;
     const max = Math.max(1, ...d.by_region.map((r) => r.count));
     const tiles = d.by_region.filter((r) => r.count > 0);
     rg.innerHTML = tiles.map((r) => `
@@ -170,10 +198,37 @@ async function loadOverview() {
     const p = d.placement;
     $("#region-note").innerHTML = `<strong>${p.placed}</strong> of ${p.total} victims placed to a UK region (${p.from_text} from place names, ${p.from_postcode} postcodes, ${p.from_companies_house} Companies House, ${p.from_manual} set manually). ` +
       `${p.overseas} look overseas / not UK, ${p.unplaced} still unplaced. ${p.api_enabled ? "" : "Companies House lookup is off: set COMPANIES_HOUSE_KEY. "}${p.running ? "<em>Looking up regions now…</em>" : ""}`;
-  } catch (e) {
-    holder.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
-  }
+    const nb = $("#newbar");
+    if (d.new_total > 0 && ME.prev_visit) {
+      nb.hidden = false;
+      nb.innerHTML = `<span><strong>${d.new_total}</strong> new UK victim${d.new_total === 1 ? "" : "s"}${region ? ` in ${esc(region)}` : ""} since your last visit (${esc(fmtTime(ME.prev_visit))}).</span><button type="button" id="newbar-go">Show them</button>`;
+      $("#newbar-go").addEventListener("click", () => { vm.newOnly = true; vm.page = 0; $("#vnew").checked = true; showTab("victims", true); });
+    } else nb.hidden = true;
+  } catch (e) { holder.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
 }
+async function loadTrend() {
+  try {
+    const d = await api(`/api/trend?${rq({ weeks: "12" })}`);
+    drawTrend($("#chart-trend"), d.series, weekLabel, true);
+    $("#trend-meta").textContent = `avg ${d.average}/week${region ? ` · ${region}` : ""}`;
+  } catch (e) { /* leave empty */ }
+}
+function newsItemHTML(n, withSummary) {
+  const themes = (n.themes || []).slice(0, 3).map((t) => `<span class="badge src">${esc(t)}</span>`).join(" ");
+  const groups = (n.groups || []).map((g) => `<span class="badge grp">${esc(g)}</span>`).join(" ");
+  return `<div class="news-item"><a class="nt" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a>
+    <div class="meta"><span class="badge uk">${esc(n.source_name)}</span> ${ago(n.published)} ${themes} ${groups}${n.uk ? ' <span class="badge wm">UK</span>' : ""}</div>
+    ${withSummary && n.summary ? `<div class="sum">${esc(n.summary.slice(0, 200))}${n.summary.length > 200 ? "…" : ""}</div>` : ""}</div>`;
+}
+async function loadNewsTop() {
+  const el = $("#news-top");
+  if (!el.children.length) el.innerHTML = sk(3);
+  try {
+    const d = await api("/api/news/top");
+    el.innerHTML = d.items.length ? d.items.map((n) => newsItemHTML(n, true)).join("") : '<div class="ldr">no dark web news yet — still syncing</div>';
+  } catch (e) { el.innerHTML = `<div class="ldr">${esc(e.message)}</div>`; }
+}
+$("#news-all").addEventListener("click", () => showTab("news", true));
 
 function drawBars(holder, rows) {
   const max = Math.max(1, ...rows.map((r) => r[1]));
@@ -188,235 +243,254 @@ function drawBars(holder, rows) {
 }
 
 // ------------------------------------------------------------------ modal
-const modal = document.getElementById("modal");
+const modal = $("#modal");
 let modalKind = "sector";
-function openModal() { modal.hidden = false; }
-function closeModal() {
-  modal.hidden = true;
-  $("#modal-back").hidden = true;
-  document.querySelectorAll(".more[data-detail]").forEach((b) => b.classList.remove("on"));
-}
+let modalBackFn = null;      // set by drill-downs that need a custom Back action
+function openModal() { modalBackFn = null; modal.hidden = false; }
+function closeModal() { modal.hidden = true; $("#modal-back").hidden = true; document.querySelectorAll(".more[data-detail]").forEach((b) => b.classList.remove("on")); }
 async function showBreakdown(kind) {
   modalKind = kind;
-  openModal();
-  track("modal_open", `breakdown ${kind}`);
+  openModal(); track("modal_open", `breakdown ${kind}`);
   $("#modal-back").hidden = true;
-  $("#modal-title").textContent = "Loading…";
-  $("#modal-explain").textContent = "";
-  $("#modal-body").innerHTML = '<div class="ldr">loading…</div>';
+  $("#modal-title").textContent = "Loading…"; $("#modal-explain").textContent = "";
+  $("#modal-body").innerHTML = sk(6);
   const d = await api(`/api/summary/detail?${rq({ kind })}`);
   $("#modal-title").textContent = d.title;
-  $("#modal-explain").textContent = "Select a row for a closer breakdown.";
+  $("#modal-explain").textContent = kind === "sector" ? "Sector as classified by ransomware.live. Select a row for a closer breakdown." : "Select a row for a closer breakdown.";
   $("#modal-body").innerHTML = '<div class="bars"></div>';
   drawBars($("#modal-body .bars"), d.items.map((r) => [r.label, r.count, r.share]));
-  $("#modal-body").querySelectorAll(".bar-row").forEach((row, i) => {
-    row.classList.add("pick");
-    row.addEventListener("click", () => showSlice(kind, d.items[i].label));
-  });
+  $("#modal-body").querySelectorAll(".bar-row").forEach((row, i) => { row.classList.add("pick"); row.addEventListener("click", () => showSlice(kind, d.items[i].label)); });
 }
 async function showSlice(kind, label) {
-  openModal();
-  $("#modal-back").hidden = false;
-  $("#modal-title").textContent = label;
-  $("#modal-explain").textContent = "Loading…";
-  const body = $("#modal-body");
-  body.innerHTML = '<div class="ldr">loading…</div>';
+  openModal(); $("#modal-back").hidden = false;
+  $("#modal-title").textContent = label; $("#modal-explain").textContent = "Loading…";
+  const body = $("#modal-body"); body.innerHTML = sk(6);
   const d = await api(`/api/summary/slice?${rq({ kind, label })}`);
   $("#modal-title").textContent = d.label;
   $("#modal-explain").textContent = `${d.explain} ${d.count} victims, ${d.share}% of the current selection.`;
   body.innerHTML = `<p class="hint">${esc(d.split_title)}</p><div class="bars"></div><div class="slice-list"></div>`;
   drawBars(body.querySelector(".bars"), d.split.map((r) => [r.label, r.count]));
-  body.querySelector(".slice-list").innerHTML = d.victims.length
-    ? d.victims.map((v) => `
-      <div class="vc">
-        <div class="name">${esc(v.post_title)}</div>
+  const list = body.querySelector(".slice-list");
+  list.innerHTML = d.victims.length ? d.victims.map((v, i) => `
+      <div class="vc" data-i="${i}" style="cursor:pointer">
+        <div class="name">${esc(v.post_title)}${townLabel(v)}${newBadge(v)}</div>
         <div class="meta"><span class="badge grp">${esc(v.group || "unknown")}</span> · ${esc(v.activity)} · ${fmtDate(v.discovered)} · ${esc(v.rocu === "Unplaced" ? "region unknown" : v.rocu)}</div>
-        ${v.website ? `<div class="meta">${esc(v.website)}</div>` : ""}
-      </div>`).join("")
-    : '<div class="ldr">no victims in this slice</div>';
+      </div>`).join("") : '<div class="ldr">no victims in this slice</div>';
+  list.querySelectorAll(".vc").forEach((el) => el.addEventListener("click", () => { closeModal(); openVictim(d.victims[+el.dataset.i]); }));
 }
 $("#tab-overview").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-detail]");
   if (!btn) return;
   document.querySelectorAll(".more[data-detail]").forEach((b) => b.classList.toggle("on", b === btn));
   try { await showBreakdown(btn.dataset.detail); }
-  catch (err) {
-    openModal();
-    $("#modal-title").textContent = "Breakdown";
-    $("#modal-body").innerHTML = `<div class="ldr">failed to load: ${esc(err.message)}</div>`;
-  }
+  catch (err) { openModal(); $("#modal-title").textContent = "Breakdown"; $("#modal-body").innerHTML = `<div class="ldr">failed to load: ${esc(err.message)}</div>`; }
 });
 $("#modal-close").addEventListener("click", closeModal);
-$("#modal-back").addEventListener("click", () => showBreakdown(modalKind));
+$("#modal-back").addEventListener("click", () => (modalBackFn ? modalBackFn() : showBreakdown(modalKind)));
 modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.hidden) closeModal(); });
 
-// ------------------------------------------------------------------ victims
-let lastVictims = [];
-const canEditRegion = () => ME && ME.role === "admin" && ME.database;
-function regionBadge(v) {
-  const edit = canEditRegion() ? `<div><button type="button" class="more small" data-edit="${esc(v.post_title)}">Edit region</button></div>` : "";
-  const manual = v.region_source === "manual" ? ` · set manually${v.override_note ? `: ${esc(v.override_note)}` : ""}` : "";
-  if (v.rocu === "Unplaced") return `<span class="badge src">region unknown</span>${edit}`;
-  if (v.rocu === "Overseas / not UK") {
-    return `<span class="badge off">Overseas / not UK</span><div class="meta">${v.region_source === "manual" ? `set manually${v.override_note ? `: ${esc(v.override_note)}` : ""}` : "probably based abroad"}</div>${edit}`;
-  }
-  return `<span class="badge uk">${esc(v.rocu)}</span><div class="meta">${esc(v.force_name)}${v.region_source && !manual ? ` · by ${esc(v.region_source.replace("-", " "))}` : ""}${manual}</div>${edit}`;
+// ------------------------------------------------------------------ victims: sort, page, search, export
+const PAGE = 50;
+const vm = { q: "", group: "", sector: "", sort: "seen", dir: "desc", page: 0, newOnly: false };
+let lastVictims = [], facetsFilled = false;
+function victimParams(extra = {}) {
+  const p = rq({ sort: vm.sort, dir: vm.dir, ...extra });
+  if (vm.q) p.set("q", vm.q);
+  if (vm.group) p.set("group", vm.group);
+  if (vm.sector) p.set("sector", vm.sector);
+  if (vm.newOnly) p.set("new", "1");
+  return p;
 }
+const regionCell = (v) => v.rocu === "Unplaced" ? '<span class="badge src">region unknown</span>'
+  : v.rocu === "Overseas / not UK" ? '<span class="badge off">Overseas / not UK</span>'
+  : `<span class="badge uk">${esc(v.rocu)}</span><div class="meta">${esc(v.force_name)}${v.region_source === "manual" ? " · set manually" : ""}</div>`;
 async function loadVictims() {
   const tbody = $("#victim-rows");
-  const q = $("#vq").value.trim(), group = $("#vgroup").value, sector = $("#vsector").value;
-  tbody.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>';
-  const extra = { limit: "200", offset: "0" };
-  if (q) extra.q = q;
-  if (group) extra.group = group;
-  if (sector) extra.sector = sector;
+  if (!tbody.children.length || tbody.querySelector(".ldr")) tbody.innerHTML = `<tr><td colspan="5">${sk(6)}</td></tr>`;
   try {
-    const d = await api(`/api/victims?${rq(extra)}`);
-    $("#vcount").textContent = `${d.total} UK victims${region ? ` in ${region}` : ""} (showing first 200)`;
+    const d = await api(`/api/victims?${victimParams({ limit: String(PAGE), offset: String(vm.page * PAGE) })}`);
     lastVictims = d.items;
     fillFacets(d.facets);
-    tbody.innerHTML = d.items.length
-      ? d.items.map((v) => `
-        <tr>
-          <td><strong>${esc(v.post_title)}</strong>
-            ${/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(\/.*)?$/i.test(v.website || "") ? `<div class="meta"><a href="https://${esc(v.website)}" target="_blank" rel="noopener noreferrer">${esc(v.website)}</a></div>` : ""}
-            ${v.registered_name ? `<div class="meta">${esc(v.registered_name)}</div>` : ""}</td>
+    $("#vnew-wrap").hidden = !ME.prev_visit;
+    $("#vnew-label").textContent = `New since your last visit (${d.new_total})`;
+    $("#vcsv").href = `/api/victims.csv?${victimParams()}`;
+    document.querySelectorAll("th.sortable").forEach((th) => {
+      const on = th.dataset.sort === vm.sort;
+      th.classList.toggle("sorted", on);
+      th.querySelector(".arrow").textContent = on ? (vm.dir === "asc" ? "▲" : "▼") : "";
+    });
+    const pages = Math.max(1, Math.ceil(d.total / PAGE));
+    $("#vcount").textContent = `${d.total} UK victims${region ? ` in ${region}` : ""}`;
+    tbody.innerHTML = d.items.length ? d.items.map((v, i) => `
+        <tr class="clickable" data-i="${i}" tabindex="0">
+          <td><strong>${esc(v.post_title)}</strong>${townLabel(v)}${newBadge(v)}
+            ${isDomain(v.website) ? `<div class="meta">${esc(v.website)}</div>` : ""}</td>
           <td><span class="badge grp">${esc(v.group)}</span></td>
           <td>${esc(v.activity || "—")}</td>
-          <td>${fmtDate(v.discovered)}</td>
-          <td>${regionBadge(v)}</td>
-        </tr>`).join("")
-      : '<tr><td colspan="5" class="ldr">no matches</td></tr>';
-  } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="5" class="ldr">failed to load: ${esc(e.message)}</td></tr>`;
-  }
+          <td>${fmtDate(v.seen || v.discovered)}</td>
+          <td>${regionCell(v)}</td>
+        </tr>`).join("") : '<tr><td colspan="5" class="ldr">no matches</td></tr>';
+    $("#vpager").innerHTML = d.total ? `<span>Showing ${vm.page * PAGE + 1}–${vm.page * PAGE + d.items.length} of ${d.total}</span>
+      <span class="btns"><button class="more" type="button" id="vprev" ${vm.page === 0 ? "disabled" : ""}>Previous</button>
+      <span style="align-self:center">Page ${vm.page + 1} of ${pages}</span>
+      <button class="more" type="button" id="vnext" ${vm.page + 1 >= pages ? "disabled" : ""}>Next</button></span>` : "";
+    const go = (n) => () => { vm.page += n; loadVictims(); window.scrollTo({ top: $("#tab-victims").offsetTop - 60, behavior: "smooth" }); };
+    $("#vprev")?.addEventListener("click", go(-1)); $("#vnext")?.addEventListener("click", go(1));
+  } catch (e) { tbody.innerHTML = `<tr><td colspan="5" class="ldr">failed to load: ${esc(e.message)}</td></tr>`; }
 }
-let facetsFilled = false;
 function fillFacets(f) {
-  // the lists come from the full UK dataset, not just the 200 rows on screen
   if (facetsFilled || !f) return;
   $("#vgroup").innerHTML = '<option value="">All groups</option>' + f.groups.map((g) => `<option>${esc(g)}</option>`).join("");
   $("#vsector").innerHTML = '<option value="">All sectors</option>' + f.sectors.map((s) => `<option>${esc(s)}</option>`).join("");
+  $("#vgroup").value = vm.group; $("#vsector").value = vm.sector;
   facetsFilled = true;
 }
+document.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("click", () => {
+  const k = th.dataset.sort;
+  vm.dir = vm.sort === k ? (vm.dir === "asc" ? "desc" : "asc") : (k === "seen" ? "desc" : "asc");
+  vm.sort = k; vm.page = 0; loadVictims(); track("filter", `victims sort: ${k} ${vm.dir}`);
+}));
+const openRow = (tr) => { if (tr && lastVictims[+tr.dataset.i]) openVictim(lastVictims[+tr.dataset.i]); };
+$("#victim-rows").addEventListener("click", (e) => { if (!e.target.closest("a")) openRow(e.target.closest("tr.clickable")); });
+$("#victim-rows").addEventListener("keydown", (e) => { if (e.key === "Enter") openRow(e.target.closest("tr.clickable")); });
 
-$("#victim-rows").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-edit]");
-  if (!b) return;
-  const v = lastVictims.find((x) => x.post_title === b.dataset.edit);
-  if (!v) return;
-  openModal();
-  $("#modal-back").hidden = true;
-  $("#modal-title").textContent = `Region: ${v.post_title}`;
-  $("#modal-explain").textContent = `Currently ${v.rocu === "Unplaced" ? "unplaced" : v.rocu}${v.region_source ? ` (by ${v.region_source.replace("-", " ")})` : ""}. A manual placement overrides every automatic method and survives refreshes.`;
-  const opts = ME.regions.filter((r) => r !== "Unplaced");
-  $("#modal-body").innerHTML = `<form id="plform" class="form-row">
-      <label class="field">Region<select id="pl-rocu" class="search">${opts.map((r) => `<option ${r === v.rocu ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
-      <label class="field">Note (optional)<input id="pl-note" class="search" maxlength="200" value="${esc(v.override_note || "")}" placeholder="e.g. HQ confirmed on company website"></label>
-      <button class="btn" type="submit">Save</button>
-      ${v.region_source === "manual" ? '<button class="more danger" type="button" id="pl-clear">Remove manual placement</button>' : ""}
-    </form><p id="pl-msg" class="hint"></p>`;
-  const done = () => { closeModal(); loadVictims(); loadTicker(); toast("Region updated"); };
-  $("#plform").addEventListener("submit", async (ev) => {
+// ------------------------------------------------------------------ victim details drawer
+const drawer = $("#drawer"), backdrop = $("#drawer-backdrop");
+function closeDrawer() { drawer.hidden = true; backdrop.hidden = true; }
+const BASIS = { text: "a place name in its description", postcode: "a postcode in its description", "companies-house": "its Companies House registered office",
+  manual: "set manually by an admin", "text-overseas": "its description says it is based abroad" };
+function openVictim(v) {
+  track("victim_view", v.post_title);
+  $("#dr-title").innerHTML = `${esc(v.post_title)}${townLabel(v)}`;
+  const basis = v.region_source ? `Placed using ${BASIS[v.region_source] || v.region_source}.` : "Not placed yet: no postcode, place name or Companies House match.";
+  const canEdit = ME.role === "admin" && ME.database;
+  $("#dr-body").innerHTML = `
+    <div>${newBadge(v).trim()} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
+    <dl class="dl">
+      <dt>First seen</dt><dd>${fmtTime(v.seen || v.discovered)}</dd>
+      <dt>Region</dt><dd>${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) ? ` · ${esc(v.town)}` : ""}</dd>
+      <dt>Basis</dt><dd>${esc(basis)}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}</dd>
+      ${v.registered_name ? `<dt>Registered as</dt><dd>${esc(v.registered_name)}</dd>` : ""}
+      ${isDomain(v.website) ? `<dt>Website</dt><dd><a href="https://${esc(v.website)}" target="_blank" rel="noopener noreferrer">${esc(v.website)}</a></dd>` : ""}
+      ${v.reposts ? `<dt>Re-posted</dt><dd>${v.reposts} more time${v.reposts === 1 ? "" : "s"} by the same group</dd>` : ""}
+    </dl>
+    ${v.description ? `<div><div class="sect">Description (from ransomware.live)</div><div class="desc">${esc(v.description)}</div></div>` : ""}
+    ${v.post_url ? `<div><div class="sect">Leak-site post (copy only, never opened from here)</div><button type="button" class="copy" data-copy="${esc(v.post_url)}" data-gang="${esc(v.group)}"><span class="addr">${esc(v.post_url)}</span><span class="cpy">copy</span></button></div>` : ""}
+    ${canEdit ? `<div><div class="sect">Admin: set region</div>
+      <form id="plform" class="form-row">
+        <label class="field">Region<select id="pl-rocu" class="search">${ME.regions.filter((r) => r !== "Unplaced").map((r) => `<option ${r === v.rocu ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
+        <label class="field">Town / district<input id="pl-town" class="search" maxlength="60" value="${esc(v.manual ? v.town : "")}" placeholder="optional"></label>
+        <label class="field">Note<input id="pl-note" class="search" maxlength="200" value="${esc(v.override_note || "")}" placeholder="optional"></label>
+        <button class="btn" type="submit">Save</button>
+        ${v.manual ? '<button class="more danger" type="button" id="pl-clear">Remove manual placement</button>' : ""}
+      </form><p id="pl-msg" class="hint"></p></div>` : ""}`;
+  drawer.hidden = false; backdrop.hidden = false;
+  const done = () => { closeDrawer(); loadVictims(); loadTicker(); toast("Region updated"); };
+  $("#plform")?.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    try { await api("/api/admin/placement", { method: "PUT", body: { title: v.post_title, rocu: $("#pl-rocu").value, note: $("#pl-note").value } }); done(); }
+    try { await api("/api/admin/placement", { method: "PUT", body: { title: v.post_title, rocu: $("#pl-rocu").value, town: $("#pl-town").value, note: $("#pl-note").value } }); done(); }
     catch (err) { $("#pl-msg").textContent = err.message; }
   });
-  const clr = $("#pl-clear");
-  if (clr) clr.addEventListener("click", async () => {
+  $("#pl-clear")?.addEventListener("click", async () => {
     try { await api(`/api/admin/placement?title=${encodeURIComponent(v.post_title)}`, { method: "DELETE" }); done(); }
     catch (err) { $("#pl-msg").textContent = err.message; }
   });
-});
-
-// ------------------------------------------------------------------ feed
-async function loadPosts() {
-  const list = $("#post-list");
-  const q = $("#pq").value.trim();
-  list.innerHTML = '<div class="ldr">loading…</div>';
-  const extra = { limit: "250" };
-  if (q) extra.q = q;
-  try {
-    const d = await api(`/api/posts?${rq(extra)}`);
-    $("#pcount").textContent = `Aggregated feed (ransomware.live · RansomLook)${region ? ` — ${region} only` : ""} — showing ${d.items.length}`;
-    list.innerHTML = d.items.length
-      ? d.items.map((p) => `
-        <div class="post">
-          <div>
-            <div class="ptitle">${esc(p.title)} ${p.rocu && p.rocu !== "Unplaced" ? `<span class="badge uk">${esc(p.rocu)}</span>` : ""}</div>
-            <div class="pdetail"><span class="badge src">${esc(p.source)}</span> <span class="badge grp">${esc(p.group || "unknown")}</span> ${p.detail ? esc(p.detail) : ""}</div>
-          </div>
-          <div class="right"><div class="pdate">${fmtDate(p.date)}</div>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">view→</a>` : ""}</div>
-        </div>`).join("")
-      : `<div class="ldr">${region ? `no recent posts matched to ${esc(region)}` : "no posts"}</div>`;
-  } catch (e) {
-    list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
-  }
 }
+$("#dr-close").addEventListener("click", closeDrawer);
+backdrop.addEventListener("click", closeDrawer);
+
+// ------------------------------------------------------------------ dark web news page
+const nm = { days: 7, q: "", source: "", theme: "", uk: "", offset: 0 };
+let newsFilled = false;
+async function loadNews(more) {
+  const list = $("#news-list");
+  if (more !== true) { nm.offset = 0; if (!list.children.length) list.innerHTML = sk(6); }
+  const p = new URLSearchParams({ limit: "40", offset: String(nm.offset) });
+  if (nm.q) p.set("q", nm.q); if (nm.source) p.set("source", nm.source); if (nm.theme) p.set("theme", nm.theme); if (nm.uk) p.set("uk", "1");
+  try {
+    const [d, s] = await Promise.all([api(`/api/news?${p}`), more === true ? Promise.resolve(null) : api(`/api/news/summary?days=${nm.days}`)]);
+    if (!newsFilled) {
+      $("#nsource").innerHTML = '<option value="">All sources</option>' + d.sources.map((x) => `<option value="${esc(x.id)}">${esc(x.name)} (${x.count})</option>`).join("");
+      $("#ntheme").innerHTML = '<option value="">All themes</option>' + d.themes.map((t) => `<option>${esc(t)}</option>`).join("");
+      newsFilled = true;
+    }
+    if (s) renderNewsSummary(s);
+    const html = d.items.map((n) => newsItemHTML(n, true)).join("");
+    list.innerHTML = (more === true ? list.innerHTML : "") + (html || '<div class="ldr">no items match</div>');
+    nm.offset += d.items.length;
+    $("#ncount").textContent = `${d.total} item${d.total === 1 ? "" : "s"} (showing ${nm.offset})`;
+    $("#n-more").hidden = nm.offset >= d.total;
+  } catch (e) { list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
+}
+function renderNewsSummary(s) {
+  $("#n-briefing").textContent = s.briefing;
+  $("#n-note").textContent = s.note;
+  $("#n-when").textContent = `last ${s.days} days`;
+  const chg = s.change == null ? "n/a" : `${s.change >= 0 ? "+" : ""}${s.change}%`;
+  $("#n-stats").innerHTML = [["Items tracked", s.total, ""], ["Sources reporting", s.sources.length, ""], ["Mention the UK", s.uk_count, "hl"],
+    [`Change vs previous ${s.days} days`, chg, ""]].map(([l, n, c]) => `<div class="stat ${c}"><div class="num">${n}</div><div class="label">${l}</div></div>`).join("");
+  drawBars($("#n-themes"), s.themes.map((t) => [t.theme, t.count, t.share]));
+  drawBars($("#n-sources"), s.sources.map((x) => [x.source, x.count]));
+  drawBars($("#n-groups"), s.groups.map((x) => [x.group, x.count]));
+  drawTrend($("#n-daily"), s.series.map((x) => ({ week: x.date, count: x.count })), (x, long) => {
+    const d = new Date(x.week + "T00:00:00Z"); return long ? d.toUTCString().slice(0, 11) : s.series.length > 14 ? d.getUTCDate() : d.toUTCString().slice(0, 3);
+  }, false);
+  $("#n-claims").innerHTML = s.claim_types.length ? '<div class="sect" style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Dark Web Informer posts by type</div>' : "";
+  if (s.claim_types.length) { const h = document.createElement("div"); h.className = "bars"; $("#n-claims").appendChild(h); drawBars(h, s.claim_types.map((c) => [c.type, c.count])); }
+}
+$("#nperiod").addEventListener("change", () => { nm.days = +$("#nperiod").value; loadNews(); track("filter", `news period: ${nm.days}d`); });
+$("#nsource").addEventListener("change", () => { nm.source = $("#nsource").value; loadNews(); track("filter", `news source: ${nm.source || "all"}`); });
+$("#ntheme").addEventListener("change", () => { nm.theme = $("#ntheme").value; loadNews(); track("filter", `news theme: ${nm.theme || "all"}`); });
+document.querySelectorAll('input[name="nuk"]').forEach((el) => el.addEventListener("change", () => { nm.uk = el.value; loadNews(); track("filter", `news UK only: ${el.value === "1"}`); }));
+$("#n-more").addEventListener("click", () => loadNews(true));
+$("#nrefresh").addEventListener("click", () => loadNews());
 
 // ------------------------------------------------------------------ gangs
 async function loadGangs() {
   const grid = $("#gang-grid");
   const q = $("#gq").value.trim(), source = $("#gsource").value, sort = $("#gsort").value;
   const live = document.querySelector('input[name="glive"]:checked')?.value === "1";
-  grid.innerHTML = '<div class="ldr">loading…</div>';
+  if (!grid.children.length) grid.innerHTML = sk(6);
   const extra = {};
-  if (q) extra.q = q;
-  if (source) extra.source = source;
-  if (sort && sort !== "name") extra.sort = sort;
-  if (live) extra.live = "1";
+  if (q) extra.q = q; if (source) extra.source = source; if (sort && sort !== "name") extra.sort = sort; if (live) extra.live = "1";
   try {
     const d = await api(`/api/gangs?${rq(extra)}`);
-    $("#gcount").textContent = `${d.total} entries ${live ? "with a live leak site" : "in catalog"}${sort === "active" ? ` · ranked by ${region || "UK"} victim posts` : ""}`;
-    grid.innerHTML = d.items.length
-      ? d.items.map((g) => {
-          const sites = (g.leak_sites || []).map((s) => {
-            const ok = s.available === true || s.status === "ONLINE";
-            const addr = s.slug || s.fqdn || "";
-            return `<div class="site-line"><span class="dot ${s.available === false || s.status === "OFFLINE" ? "bad" : ok ? "ok" : "na"}"></span>${addr ? `<button type="button" class="copy" data-copy="${esc(addr)}" data-gang="${esc(g.name)}" title="Click to copy. Never opened from here."><span class="addr">${esc(addr)}</span><span class="cpy">copy</span></button>` : "site"}</div>`;
-          });
-          const meta = [g.added_date ? `tracked since ${esc(g.added_date)}` : "", g.activity ? `${g.activity} UK victim${g.activity === 1 ? "" : "s"}${region ? ` in ${esc(region)}` : ""}` : ""].filter(Boolean);
-          return `
-        <div class="gc">
+    $("#gcount").textContent = `${d.total} entries ${live ? "with a live leak site" : "in catalog"}${sort === "active" ? ` · ranked by ${region || "UK"} victims` : ""}`;
+    grid.innerHTML = d.items.length ? d.items.map((g) => {
+      const sites = (g.leak_sites || []).map((s) => {
+        const ok = s.available === true || s.status === "ONLINE";
+        const addr = s.slug || s.fqdn || "";
+        return `<div class="site-line"><span class="dot ${s.available === false || s.status === "OFFLINE" ? "bad" : ok ? "ok" : "na"}"></span>${addr ? `<button type="button" class="copy" data-copy="${esc(addr)}" data-gang="${esc(g.name)}" title="Click to copy. Never opened from here."><span class="addr">${esc(addr)}</span><span class="cpy">copy</span></button>` : "site"}</div>`;
+      });
+      const meta = [g.added_date ? `tracked since ${esc(g.added_date)}` : "", g.activity ? `${g.activity} UK victim${g.activity === 1 ? "" : "s"}${region ? ` in ${esc(region)}` : ""}` : ""].filter(Boolean);
+      return `<div class="gc">
           <div class="gname">${esc(g.name)} ${(g.sources || []).map((s) => `<span class="badge src">${esc(s)}</span>`).join(" ")}</div>
           ${g.altname ? `<div class="meta"><span class="badge uk">${esc(g.altname)}</span></div>` : ""}
           ${g.description ? `<div class="gdesc" title="${esc(g.description)}">${esc(g.description.slice(0, 180))}${g.description.length > 180 ? "…" : ""}</div>` : ""}
           ${sites.length ? `<div class="sites">${sites.join("")}</div>` : ""}
-          <div class="meta">${meta.join(" · ")}</div>
-        </div>`;
-        }).join("")
-      : '<div class="ldr">no gangs match these filters</div>';
-  } catch (e) {
-    grid.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
-  }
+          <div class="meta">${meta.join(" · ")}</div></div>`;
+    }).join("") : '<div class="ldr">no gangs match these filters</div>';
+  } catch (e) { grid.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
 }
 
-// ------------------------------------------------------------------ alerts & news
+// ------------------------------------------------------------------ alerts
 async function loadAlerts() {
   const list = $("#alert-list");
   const q = $("#aq").value.trim(), source = $("#asource").value;
-  list.innerHTML = '<div class="ldr">loading…</div>';
+  if (!list.children.length) list.innerHTML = sk(6);
   const p = new URLSearchParams({ limit: "150" });
-  if (q) p.set("q", q);
-  if (source) p.set("source", source);
+  if (q) p.set("q", q); if (source) p.set("source", source);
   try {
     const d = await api(`/api/intel?${p}`);
     $("#acount").textContent = `${d.total} items (national: not filtered by region)`;
-    list.innerHTML = d.items.length
-      ? d.items.map((item) => `
+    list.innerHTML = d.items.length ? d.items.map((item) => `
         <div class="post">
-          <div>
-            <div class="ptitle">${esc(item.title)}</div>
+          <div><div class="ptitle">${esc(item.title)}</div>
             <div class="pdetail"><span class="badge src">${esc(item.source)}</span> <span class="badge grp">${esc(item.kind)}</span>
-              ${item.extra?.cve ? esc(item.extra.cve) + " " : ""}${item.extra?.vendor ? esc(item.extra.vendor) + " " : ""}${item.summary ? esc(item.summary.slice(0, 220)) : ""}</div>
-          </div>
+              ${item.extra?.cve ? esc(item.extra.cve) + " " : ""}${item.extra?.vendor ? esc(item.extra.vendor) + " " : ""}${item.summary ? esc(item.summary.slice(0, 220)) : ""}</div></div>
           <div class="right"><div class="pdate">${fmtDate(item.published)}</div>${item.url ? `<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">view→</a>` : ""}</div>
-        </div>`).join("")
-      : '<div class="ldr">no alerts yet — still syncing</div>';
-  } catch (e) {
-    list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`;
-  }
+        </div>`).join("") : '<div class="ldr">no alerts yet — still syncing</div>';
+  } catch (e) { list.innerHTML = `<div class="ldr">failed to load: ${esc(e.message)}</div>`; }
 }
 
 // ------------------------------------------------------------------ click to copy
@@ -443,8 +517,7 @@ document.addEventListener("click", async (e) => {
   const label = b.querySelector(".cpy");
   if (ok) {
     b.classList.add("done"); if (label) label.textContent = "copied";
-    toast("Copied to clipboard");
-    track("copy_leak_site", b.dataset.gang || "");
+    toast("Copied to clipboard"); track("copy_leak_site", b.dataset.gang || "");
     setTimeout(() => { b.classList.remove("done"); if (label) label.textContent = "copy"; }, 1400);
   } else toast("Copy failed: select the text manually");
 });
@@ -458,7 +531,7 @@ const genPassword = () => {
 let userCache = [];
 async function loadUsers() {
   const body = $("#user-rows");
-  body.innerHTML = '<tr><td colspan="7" class="ldr">loading…</td></tr>';
+  body.innerHTML = `<tr><td colspan="7">${sk(3)}</td></tr>`;
   try {
     const d = await api("/api/admin/users");
     userCache = d.users;
@@ -471,7 +544,8 @@ async function loadUsers() {
         <td><select class="search u-reg" data-id="${u.id}" aria-label="Region for ${esc(u.username)}">${regionOpts(u.region)}</select></td>
         <td>${u.active ? '<span class="badge on">active</span>' : '<span class="badge off">disabled</span>'}</td>
         <td>${u.last_login ? fmtTime(u.last_login) : '<span class="meta">never</span>'}</td>
-        <td>${u.events}</td>
+        <td><button type="button" class="link" data-act="events" data-id="${u.id}" title="See ${esc(u.username)}'s activity">${u.events} event${u.events === 1 ? "" : "s"}</button>
+          <div class="meta">${u.last_activity ? `last ${ago(u.last_activity)}` : "none yet"}</div></td>
         <td class="actions">
           <button class="more" data-act="pw" data-id="${u.id}">Reset password</button>
           <button class="more" data-act="role" data-id="${u.id}">${u.role === "admin" ? "Make user" : "Make admin"}</button>
@@ -479,9 +553,7 @@ async function loadUsers() {
           <button class="more danger" data-act="del" data-id="${u.id}">Delete</button>
         </td>
       </tr>`).join("");
-  } catch (e) {
-    body.innerHTML = `<tr><td colspan="7" class="ldr">${esc(e.message)}</td></tr>`;
-  }
+  } catch (e) { body.innerHTML = `<tr><td colspan="7" class="ldr">${esc(e.message)}</td></tr>`; }
 }
 $("#u-gen").addEventListener("click", () => { $("#u-pass").value = genPassword(); });
 $("#uform").addEventListener("submit", async (e) => {
@@ -508,15 +580,13 @@ $("#user-rows").addEventListener("click", async (e) => {
   const patch = (body) => api(`/api/admin/users/${u.id}`, { method: "PATCH", body }).then(loadUsers).catch((err) => toast(err.message));
   if (b.dataset.act === "role") patch({ role: u.role === "admin" ? "user" : "admin" });
   else if (b.dataset.act === "active") patch({ active: !u.active });
+  else if (b.dataset.act === "events") showUserActivity(u);
   else if (b.dataset.act === "del") {
-    if (confirm(`Delete ${u.username}? Their past activity stays in the log.`)) {
-      api(`/api/admin/users/${u.id}`, { method: "DELETE" }).then(loadUsers).catch((err) => toast(err.message));
-    }
+    if (confirm(`Delete ${u.username}? Their past activity stays in the log.`)) api(`/api/admin/users/${u.id}`, { method: "DELETE" }).then(loadUsers).catch((err) => toast(err.message));
   } else if (b.dataset.act === "pw") passwordDialog(u);
 });
 function passwordDialog(u) {
-  openModal();
-  $("#modal-back").hidden = true;
+  openModal(); $("#modal-back").hidden = true;
   $("#modal-title").textContent = `Reset password: ${u.username}`;
   $("#modal-explain").textContent = "Sets a new password and signs them out everywhere. Tell them the new password yourself.";
   $("#modal-body").innerHTML = `<form id="pwform" class="form-row"><label class="field">New password (10+ characters)
@@ -533,6 +603,25 @@ function passwordDialog(u) {
     } catch (err) { $("#pwmsg").textContent = err.message; }
   });
 }
+// click a user's activity count to see what they have been doing
+async function showUserActivity(u) {
+  openModal(); $("#modal-back").hidden = true;
+  $("#modal-title").textContent = `Activity: ${u.username}`;
+  $("#modal-explain").textContent = `${u.events} event${u.events === 1 ? "" : "s"}${u.last_activity ? `, last ${ago(u.last_activity)}` : ""}. Newest first.`;
+  $("#modal-body").innerHTML = `<div class="table-wrap"><table class="table" style="min-width:0"><thead><tr><th>Time</th><th>Event</th><th>Detail</th></tr></thead><tbody id="ua-rows"><tr><td colspan="3">${sk(4)}</td></tr></tbody></table></div>
+    <p style="display:flex;gap:8px;margin-top:12px"><button id="ua-more" class="more" type="button" hidden>Load more</button><button id="ua-open" class="more" type="button">Open in Activity tab</button></p>`;
+  let off = 0;
+  const load = async () => {
+    const d = await api(`/api/admin/activity?${new URLSearchParams({ user: u.username, limit: "40", offset: String(off) })}`);
+    const rows = d.items.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td><span class="badge ${/failed|delete|locked/.test(r.event + r.detail) ? "off" : "src"}">${esc(r.event)}</span></td><td>${esc(r.detail)}</td></tr>`).join("");
+    const body = $("#ua-rows");
+    body.innerHTML = (off ? body.innerHTML : "") + (rows || '<tr><td colspan="3" class="ldr">no activity recorded</td></tr>');
+    off += d.items.length; $("#ua-more").hidden = off >= d.total;
+  };
+  try { await load(); } catch (e) { $("#ua-rows").innerHTML = `<tr><td colspan="3" class="ldr">${esc(e.message)}</td></tr>`; }
+  $("#ua-more").addEventListener("click", load);
+  $("#ua-open").addEventListener("click", () => { closeModal(); showTab("activity", true); setTimeout(() => { $("#act-user").value = u.username; loadActivity(); }, 50); });
+}
 
 // ------------------------------------------------------------------ admin: activity
 let actOffset = 0;
@@ -545,12 +634,14 @@ const actParams = (extra = {}) => {
 };
 async function loadActivity(more) {
   const body = $("#act-rows");
-  if (more !== true) { actOffset = 0; body.innerHTML = '<tr><td colspan="5" class="ldr">loading…</td></tr>'; }
+  if (more !== true) { actOffset = 0; body.innerHTML = `<tr><td colspan="5">${sk(4)}</td></tr>`; }
   try {
     const d = await api(`/api/admin/activity?${actParams({ limit: "100", offset: String(actOffset) })}`);
+    const keepU = $("#act-user").value, keepE = $("#act-event").value;
     if ($("#act-user").options.length <= 1) {
       $("#act-user").innerHTML = '<option value="">All users</option>' + d.users.map((u) => `<option>${esc(u)}</option>`).join("");
       $("#act-event").innerHTML = '<option value="">All events</option>' + d.events.map((u) => `<option>${esc(u)}</option>`).join("");
+      $("#act-user").value = keepU; $("#act-event").value = keepE;
     }
     const rows = d.items.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td>${esc(r.username || "—")}</td><td><span class="badge ${/failed|delete|locked/.test(r.event + r.detail) ? "off" : "src"}">${esc(r.event)}</span></td><td>${esc(r.detail)}</td><td class="meta">${esc(r.ip)}</td></tr>`).join("");
     body.innerHTML = (more === true ? body.innerHTML : "") + (rows || '<tr><td colspan="5" class="ldr">no activity matches</td></tr>');
@@ -558,9 +649,7 @@ async function loadActivity(more) {
     $("#act-count").textContent = `${d.total} events (showing ${actOffset})`;
     $("#act-more").hidden = actOffset >= d.total;
     $("#act-csv").href = `/api/admin/activity.csv?${actParams()}`;
-  } catch (e) {
-    body.innerHTML = `<tr><td colspan="5" class="ldr">${esc(e.message)}</td></tr>`;
-  }
+  } catch (e) { body.innerHTML = `<tr><td colspan="5" class="ldr">${esc(e.message)}</td></tr>`; }
 }
 $("#act-refresh").addEventListener("click", () => loadActivity());
 $("#act-more").addEventListener("click", () => loadActivity(true));
@@ -569,8 +658,7 @@ $("#act-q").addEventListener("input", debounce(() => loadActivity(), 350));
 
 // ------------------------------------------------------------------ account
 $("#usermenu").addEventListener("click", () => {
-  openModal();
-  $("#modal-back").hidden = true;
+  openModal(); $("#modal-back").hidden = true;
   $("#modal-title").textContent = ME.username;
   $("#modal-explain").textContent = `${ME.role === "admin" ? "Administrator" : "User"} · ${ME.database ? "activity is logged" : "database not connected"}`;
   $("#modal-body").innerHTML = ME.database ? `<h3 class="sub">Change password</h3>
@@ -586,8 +674,7 @@ $("#usermenu").addEventListener("click", () => {
     if ($("#pw-new").value !== $("#pw-rep").value) { $("#mypw-msg").textContent = "The new passwords do not match."; return; }
     try {
       await api("/api/me/password", { method: "POST", body: { current: $("#pw-cur").value, new: $("#pw-new").value } });
-      $("#mypw-msg").textContent = "Password changed.";
-      f.reset();
+      $("#mypw-msg").textContent = "Password changed."; f.reset();
     } catch (err) { $("#mypw-msg").textContent = err.message; }
   });
 });
@@ -598,25 +685,33 @@ const trackedSearch = (id, label, fn) => $(`#${id}`).addEventListener("input", d
   const v = $(`#${id}`).value.trim();
   if (v) track("search", `${label}: ${v}`);
 }, 400));
-trackedSearch("vq", "victims", loadVictims);
-trackedSearch("pq", "feed", loadPosts);
+trackedSearch("vq", "victims", () => { vm.q = $("#vq").value.trim(); vm.page = 0; loadVictims(); });
+trackedSearch("nq", "news", () => { nm.q = $("#nq").value.trim(); loadNews(); });
 trackedSearch("gq", "gangs", loadGangs);
 trackedSearch("aq", "alerts", loadAlerts);
-[["vgroup", "victims group", loadVictims], ["vsector", "victims sector", loadVictims], ["gsource", "gangs source", loadGangs],
- ["gsort", "gangs sort", loadGangs], ["asource", "alerts source", loadAlerts]].forEach(([id, label, fn]) =>
+$("#vgroup").addEventListener("change", () => { vm.group = $("#vgroup").value; vm.page = 0; loadVictims(); track("filter", `victims group: ${vm.group || "all"}`); });
+$("#vsector").addEventListener("change", () => { vm.sector = $("#vsector").value; vm.page = 0; loadVictims(); track("filter", `victims sector: ${vm.sector || "all"}`); });
+$("#vnew").addEventListener("change", () => { vm.newOnly = $("#vnew").checked; vm.page = 0; loadVictims(); track("filter", `victims new only: ${vm.newOnly}`); });
+[["gsource", "gangs source", loadGangs], ["gsort", "gangs sort", loadGangs], ["asource", "alerts source", loadAlerts]].forEach(([id, label, fn]) =>
   $(`#${id}`).addEventListener("change", () => { fn(); track("filter", `${label}: ${$(`#${id}`).value || "all"}`); }));
 document.querySelectorAll('input[name="glive"]').forEach((el) => el.addEventListener("change", () => { loadGangs(); track("filter", `gangs live only: ${el.value === "1"}`); }));
 $("#vrefresh").addEventListener("click", loadVictims);
-$("#prefresh").addEventListener("click", loadPosts);
 $("#grefresh").addEventListener("click", loadGangs);
 $("#arefresh").addEventListener("click", loadAlerts);
+
+// keyboard: "/" jumps to the search box of the current tab, Esc closes dialogs
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { if (!drawer.hidden) closeDrawer(); else if (!modal.hidden) closeModal(); return; }
+  if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
+  const box = { victims: "#vq", news: "#nq", gangs: "#gq", alerts: "#aq", activity: "#act-q" }[activeTab()];
+  if (box) { e.preventDefault(); $(box).focus(); }
+});
 
 // ------------------------------------------------------------------ keep-screen-on: the shield in the header is the switch
 // Click the eye to keep the screen awake while this tab is visible; the eye turns green while it is on.
 (function () {
   const btn = $("#awake"), fav = $("#favicon");
-  let lock = null;
-  let want = false;
+  let lock = null, want = false;
   try { want = localStorage.getItem("evileye-awake") === "1"; } catch (e) { /* storage unavailable */ }
   const store = (on) => { try { on ? localStorage.setItem("evileye-awake", "1") : localStorage.removeItem("evileye-awake"); } catch (e) { /* ignore */ } };
   function paint() {
@@ -627,12 +722,9 @@ $("#arefresh").addEventListener("click", loadAlerts);
   }
   async function acquire() {
     if (!navigator.wakeLock) { want = false; store(false); paint(); toast("This browser cannot keep the screen awake."); return false; }
-    try {
-      lock = await navigator.wakeLock.request("screen");
-      lock.addEventListener("release", () => { lock = null; paint(); });
-    } catch (err) { lock = null; toast(err.message || "Screen wake was denied by the browser."); }
-    paint();
-    return !!lock;
+    try { lock = await navigator.wakeLock.request("screen"); lock.addEventListener("release", () => { lock = null; paint(); }); }
+    catch (err) { lock = null; toast(err.message || "Screen wake was denied by the browser."); }
+    paint(); return !!lock;
   }
   async function setAwake(on) {
     want = on; store(on);
@@ -645,24 +737,16 @@ $("#arefresh").addEventListener("click", loadAlerts);
   if (want) acquire(); else paint();
 })();
 
-// ------------------------------------------------------------------ home: the EvilEye text goes back to the Overview
-$("#home").addEventListener("click", (e) => {
-  e.preventDefault();
-  document.querySelector('.tab[data-tab="overview"]').click();
-  window.scrollTo({ top: 0, behavior: "smooth" });
-});
+// home: the EvilEye text goes back to the Overview
+$("#home").addEventListener("click", (e) => { e.preventDefault(); showTab("overview", true); window.scrollTo({ top: 0, behavior: "smooth" }); });
 
 // ------------------------------------------------------------------ refresh policy
 // External feeds are fetched by the server only when the page is opened (if stale) or Refresh is pressed.
 async function waitForRefresh() {
-  for (let i = 0; i < 40; i++) {
-    const h = await loadHealth();
-    if (!h.refreshing) return;
-    await new Promise((res) => setTimeout(res, 3000));
-  }
+  for (let i = 0; i < 40; i++) { const h = await loadHealth(); if (!h.refreshing) return; await new Promise((res) => setTimeout(res, 3000)); }
 }
-// Region lookups run on the server after an open or Refresh. While that one job runs we re-read the
-// screen every 20s, then stop. No polling otherwise.
+// Region lookups run on the server after an open or Refresh. While that one job runs we re-read the screen every
+// 20s, then stop. No polling otherwise.
 let tracking = false;
 async function trackPlacing() {
   if (tracking) return;
@@ -671,7 +755,7 @@ async function trackPlacing() {
     await new Promise((res) => setTimeout(res, 2000));
     for (let i = 0; i < 60; i++) {
       const h = await loadHealth();
-      if (["overview", "victims", "posts"].includes(activeTab())) refreshCurrent();
+      if (["overview", "victims"].includes(activeTab())) refreshCurrent();
       loadTicker();
       if (!h.placing) break;
       await new Promise((res) => setTimeout(res, 20000));
@@ -680,24 +764,27 @@ async function trackPlacing() {
 }
 $("#refresh-now").addEventListener("click", async () => {
   const btn = $("#refresh-now");
-  btn.disabled = true; btn.textContent = "Refreshing";
-  try { await api("/api/refresh", { method: "POST" }); } catch (err) { btn.title = err.message || "Refresh failed"; }
+  btn.disabled = true; btn.classList.add("spinning");
+  try { await api("/api/refresh", { method: "POST" }); } catch (err) { toast(err.message || "Refresh failed"); }
   await waitForRefresh();
-  btn.disabled = false; btn.textContent = "Refresh";
+  btn.disabled = false; btn.classList.remove("spinning");
   refreshCurrent(); loadTicker(); trackPlacing();
 });
 
 async function init() {
   try { ME = await api("/api/me"); } catch (e) { return; }
+  const h = readHash();
   region = ME.region || "";
+  if (h.region && ME.regions.includes(h.region)) region = h.region;        // a shared link filters the view without changing your saved region
   buildRegionSelect();
-  $("#usermenu").textContent = ME.username;
   if (ME.role === "admin" && ME.database) document.querySelectorAll(".admin-only").forEach((el) => { el.hidden = false; });
-  loadHealth(); loadOverview(); loadTicker();
-  try {
-    const o = await api("/api/open", { method: "POST" });
-    if (o.refreshing) await waitForRefresh();
-  } catch (e) { /* offline: show cached data */ }
+  $("#usermenu").title = `Account: ${ME.username}`;
+  // record this visit first so "new since your last visit" is measured against the previous one
+  let refreshing = false;
+  try { const o = await api("/api/open", { method: "POST" }); ME.prev_visit = o.prev_visit; refreshing = o.refreshing; } catch (e) { /* offline: show cached data */ }
+  if (h.tab && document.querySelector(`.tab[data-tab="${h.tab}"]`) && h.tab !== "overview") showTab(h.tab, false); else { updateFilterBar(); syncHash(); loadOverview(); }
+  loadHealth(); loadTicker();
+  if (refreshing) await waitForRefresh();
   await loadHealth();
   refreshCurrent(); loadTicker(); trackPlacing();
 }

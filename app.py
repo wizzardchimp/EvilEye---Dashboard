@@ -18,7 +18,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from functools import wraps
 from pathlib import Path
@@ -34,7 +34,8 @@ BASE = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SNAPSHOT = DATA_DIR / "snapshot.json"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+SNAP_KEYS = ("victims", "gangs", "intel", "news", "last_refresh", "errors")
 
 PASSWORD = os.environ.get("EVILEYE_PASSWORD", "")          # legacy password, and first-admin bootstrap
 ADMIN_USER = os.environ.get("EVILEYE_ADMIN_USER", "admin")
@@ -50,7 +51,7 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
 
 # ----------------------------------------------------------------- state
 _lock = threading.Lock()
-STATE = {"victims": [], "posts": [], "gangs": [], "intel": [], "last_refresh": {}, "errors": {}}
+STATE = {"victims": [], "gangs": [], "intel": [], "news": [], "last_refresh": {}, "errors": {}}
 _refreshing = False
 _geo_running = False
 GEO = geo.load_geo(DATA_DIR)
@@ -67,12 +68,16 @@ def _load_snapshot():
     try:
         snap = json.loads(SNAPSHOT.read_text())
         if snap.get("schema") == SCHEMA_VERSION:
-            STATE.update({k: snap[k] for k in ("victims", "posts", "gangs", "intel", "last_refresh", "errors")})
+            STATE.update({k: snap[k] for k in SNAP_KEYS})
     except Exception:
         pass
 
 
 _load_snapshot()
+
+
+def _save_snapshot():
+    SNAPSHOT.write_text(json.dumps({"schema": SCHEMA_VERSION, **{k: STATE[k] for k in SNAP_KEYS}}))
 
 
 def _now_iso():
@@ -96,7 +101,7 @@ def load_overrides():
     if LEGACY:
         return
     try:
-        rows = db.many("select key, rocu, note, set_by from placement_overrides")
+        rows = db.many("select key, rocu, note, set_by, town from placement_overrides")
         OVERRIDES.clear()
         OVERRIDES.update({r["key"]: r for r in rows})
     except Exception as e:
@@ -112,16 +117,17 @@ def _apply_geo(victims):
         v["manual"] = bool(ov)
         v["override_note"] = ov["note"] if ov else ""
         if ov:
-            v.update(rocu=ov["rocu"], force="", region_source="manual", registered_name=v.get("registered_name", ""))
+            v.update(rocu=ov["rocu"], force="", region_source="manual", town=ov.get("town") or "",
+                     registered_name=v.get("registered_name", ""))
         elif g.get("status") == "placed":
-            v.update(rocu=g["rocu"], force=g["force"], region_source=g.get("source", "api"),
+            v.update(rocu=g["rocu"], force=g["force"], region_source=g.get("source", "api"), town=g.get("district") or "",
                      registered_name=g.get("company") or "")
         elif v.get("text_force"):
-            v.update(force=v["text_force"], rocu=geo.rocu_of(v["text_force"]), region_source="text")
+            v.update(force=v["text_force"], rocu=geo.rocu_of(v["text_force"]), region_source="text", town=v.get("text_term", ""))
         elif v.get("text_overseas"):
-            v.update(force="", rocu=geo.OVERSEAS, region_source="text-overseas")
+            v.update(force="", rocu=geo.OVERSEAS, region_source="text-overseas", town="")
         else:
-            v.update(force="", rocu="Unplaced", region_source="")
+            v.update(force="", rocu="Unplaced", region_source="", town="")
         v["force_name"] = geo.FORCE_NAMES.get(v["force"], "")
 
 
@@ -145,27 +151,146 @@ def _rss(url, source, kind, limit=25, skip=None):
     return out
 
 
+# ---- dark web news: specialist sources first; general security press is kept only when it is dark-web relevant
+NEWS_SOURCES = [   # id, feed, display name, weight
+    ("darkwebinformer", "https://darkwebinformer.com/rss/", "Dark Web Informer", 3),
+    ("databreaches", "https://databreaches.net/feed/", "DataBreaches.net", 2),
+    ("hackread", "https://hackread.com/feed/", "Hackread", 1),
+    ("therecord", "https://therecord.media/feed", "The Record", 1),
+    ("thehackernews", "https://feeds.feedburner.com/TheHackersNews", "The Hacker News", 1),
+    ("securityweek", "https://feeds.feedburner.com/securityweek", "SecurityWeek", 1),
+    ("darkreading", "https://www.darkreading.com/rss.xml", "Dark Reading", 1),
+    ("bleepingcomputer", "https://www.bleepingcomputer.com/feed/", "BleepingComputer", 1),
+    ("krebs", "https://krebsonsecurity.com/feed/", "Krebs on Security", 1),
+]
+THEMES = [
+    ("Ransomware", re.compile(r"ransomware|extortion|leak site|decrypt", re.I)),
+    ("Data breach / leak", re.compile(r"data breach|breach|\bleak(ed|s)?\b|exposed|stolen data|sale claim|database", re.I)),
+    ("Access & credentials", re.compile(r"initial access|credential|stealer log|combolist|infostealer|account takeover|access broker|\brdp\b", re.I)),
+    ("Malware", re.compile(r"malware|loader|botnet|trojan|backdoor|stealer|\brat\b|wiper|spyware", re.I)),
+    ("Forums & marketplaces", re.compile(r"dark ?web|darknet|\bforum\b|marketplace|breachforums|telegram|underground|for sale|selling", re.I)),
+    ("Law enforcement", re.compile(r"arrest|seiz(ed|ure)|takedown|sentenc|extradit|\bcharged\b|indict|europol|\bfbi\b|national crime agency", re.I)),
+    ("Vulnerabilities", re.compile(r"cve-\d|zero-day|0-day|vulnerabilit|exploit", re.I)),
+]
+DARK_RE = re.compile(r"dark ?web|darknet|ransomware|extortion|\bleak(ed|s)?\b|breach|stolen|threat actor|data theft|sale claim|"
+                     r"for sale|infostealer|stealer|initial access|underground|telegram|marketplace|credential", re.I)
+UK_NEWS_RE = re.compile(r"\b(UK|U\.K\.|United Kingdom|Britain|British|England|Scotland|Wales|Northern Ireland|NHS|NCSC|"
+                        r"National Crime Agency|Companies House)\b|\.co\.uk")
+# ransomware.live lists some groups under ordinary words. These only count when capitalised AND the text is about ransomware...
+COMMON_WORDS = {"play", "cactus", "medusa", "hunters", "royal", "rhysida", "everest", "sarcoma", "abyss", "snake", "babuk", "brotherhood",
+                "blackout", "bluesky", "cyclops", "direwolf", "eclipse", "embargo", "endurance", "entropy", "exorcist", "genesis",
+                "inception", "insomnia", "interlock", "kryptos", "deadlock", "barracuda", "argonauts", "chaos", "ember"}
+# ...and these catalogue entries are not group names at all
+NOT_GROUPS = {"unknown", "underground", "test", "none", "other", "leaked data", "leakeddata", "data leak", "dataleak", "cyberfeeddigest"}
+
+
+def _news_feed(fid, url, name, weight):
+    root = ET.fromstring(_get(url, False))
+    out = []
+    for it in root.iter("item"):
+        title = re.sub(r"\s+", " ", (it.findtext("title") or "")).strip()
+        link = (it.findtext("link") or "").strip()
+        if not title or not link:
+            continue
+        try:
+            d = parsedate_to_datetime(it.findtext("pubDate"))
+            pub = (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+        except Exception:
+            pub = None
+        desc = it.findtext("description") or ""
+        summary = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", desc)).strip()[:320]
+        cats = [c.text.strip() for c in it.findall("category") if c.text][:5]
+        out.append({"title": title, "url": link, "source": fid, "source_name": name, "weight": weight,
+                    "published": pub, "summary": summary, "cats": cats})
+    return out
+
+
+def _group_matcher(gangs):
+    """Find ransomware-group names in text. Short or everyday-word names ('Play', 'Medusa') only count when they
+    are capitalised and the text is about ransomware, so ordinary sentences do not match."""
+    sure, tricky, canon = [], [], {}
+    for g_ in gangs:
+        n = g_["name"]
+        if n.lower() in NOT_GROUPS:
+            continue
+        for variant in {n, re.sub(r"\d+$", "", n)}:
+            if len(variant) < 4 or variant.lower() in NOT_GROUPS:
+                continue
+            canon[variant.lower()] = n
+            (tricky if len(variant) < 7 or variant.lower() in COMMON_WORDS else sure).append(variant)
+    pat = lambda names, flags: re.compile(r"(?<![\w-])(" + "|".join(re.escape(x) for x in sorted(names, key=len, reverse=True)) + r")(?![\w-])", flags) if names else None
+    sure_re = pat(sure, re.I)
+    tricky_re = pat([t.capitalize() for t in tricky] + [t for t in tricky if t != t.lower()], 0)
+    ctx = re.compile(r"ransom|extortion|affiliate|leak site|gang", re.I)
+
+    def find(text):
+        found = []
+        if sure_re:
+            found += [canon.get(m.group(1).lower()) for m in sure_re.finditer(text)]
+        if tricky_re and ctx.search(text):
+            found += [canon.get(m.group(1).lower()) for m in tricky_re.finditer(text)]
+        out = []
+        for f in found:
+            if f and f not in out:
+                out.append(f)
+        return out[:3]
+    return find
+
+
+def _build_news(gangs):
+    """Fetch every news feed, keep the dark-web relevant items, tag themes / ransomware groups / UK mentions."""
+    find_groups = _group_matcher(gangs)
+    items, errs, stamps = {}, {}, {}
+    for fid, url, name, weight in NEWS_SOURCES:
+        try:
+            for n in _news_feed(fid, url, name, weight):
+                text = n["title"] + ". " + n["summary"] + " " + " ".join(n["cats"])
+                if fid != "darkwebinformer" and not DARK_RE.search(text):
+                    continue                                    # e.g. a Windows update story: not dark web news
+                themes = [t for t, rx in THEMES if rx.search(text)]
+                n.update(themes=themes, groups=find_groups(text), uk=bool(UK_NEWS_RE.search(text)),
+                         score=n.pop("weight") + min(3, len(themes)))
+                k = geo.norm(n["title"])
+                if k not in items or n["score"] > items[k]["score"]:
+                    items[k] = n
+            stamps["news_" + fid] = _now_iso()
+        except Exception as e:
+            errs["news_" + fid] = str(e)
+    out = sorted(items.values(), key=lambda n: n["published"] or "", reverse=True)[:300]
+    return out, errs, stamps
+
+
 def _ingest():
     global _refreshing
     errors, stamps = {}, {}
-    new = {k: STATE[k] for k in ("victims", "posts", "gangs", "intel")}
+    new = {k: STATE[k] for k in ("victims", "gangs", "intel", "news")}
 
-    # ransomware.live: UK victims
+    # ransomware.live: UK victims. The same company claimed again by the same group is ONE victim (newest sighting).
     try:
-        victims = []
+        rows = {}
         for v in _get("https://api.ransomware.live/v2/countryvictims/GB"):
             desc = v.get("description") or ""
             title = v.get("post_title") or ""
             hit = geo.place_text(title + ". " + desc)
             pc = geo.postcode_in(desc)
             over = None if (hit or pc) else geo.detect_overseas(title + ". " + desc, v.get("website") or "")
-            victims.append({
+            rec = {
                 "post_title": title, "key": geo.norm(title), "group": v.get("group_name") or "unknown",
                 "activity": _sector(v.get("activity")), "discovered": v.get("published") or v.get("discovered"),
                 "seen": v.get("discovered") or v.get("published") or "", "year": _year(v),
                 "website": (v.get("website") or "").strip(), "post_url": v.get("post_url") or "",
+                "description": desc[:700], "reposts": 0,
                 "text_force": hit[0] if hit else "", "text_term": hit[1] if hit else "",
-                "postcode_hint": pc, "text_overseas": over or "", "registered_name": ""})
+                "postcode_hint": pc, "text_overseas": over or "", "registered_name": "", "town": ""}
+            k = (rec["key"] or title, rec["group"])
+            old = rows.get(k)
+            if old:
+                rec["reposts"] = old["reposts"] + 1
+                if str(old["seen"]) > str(rec["seen"]):
+                    old["reposts"] += 1
+                    continue
+            rows[k] = rec
+        victims = list(rows.values())
         load_overrides()
         _apply_geo(victims)
         new["victims"] = victims
@@ -173,13 +298,10 @@ def _ingest():
     except Exception as e:
         errors["rl_victims_gb"] = str(e)
 
-    # aggregated attack feed: ransomware.live recent + RansomLook recent
-    posts, intel = [], []
+    # leak-site posts and press mentions feed the Alerts tab
+    intel = []
     try:
         for v in _get("https://api.ransomware.live/v2/recentvictims"):
-            posts.append({"title": v.get("victim") or "", "source": "ransomware.live", "group": v.get("group") or "",
-                          "country": v.get("country") or "", "detail": (v.get("description") or "")[:200],
-                          "date": v.get("discovered"), "url": v.get("url") or ""})
             if v.get("press"):
                 intel.append({"title": v.get("victim") or "", "source": "ransomware.live", "kind": "press",
                               "summary": (v.get("description") or "")[:260], "url": v.get("url") or "",
@@ -189,21 +311,17 @@ def _ingest():
         errors["rl_recent"] = str(e)
     rlook_groups = set()
     try:
+        n_rl = 0
         for v in _get("https://www.ransomlook.io/api/recent/100"):
             rlook_groups.add(v.get("group_name") or "")
-            d = (v.get("discovered") or "").replace(" ", "T")
-            posts.append({"title": v.get("post_title") or "", "source": "ransomlook", "group": v.get("group_name") or "",
-                          "country": "", "detail": (v.get("description") or "")[:200], "date": d, "url": v.get("link") or ""})
-            if len([i for i in intel if i["source"] == "ransomlook"]) < 30:
+            if n_rl < 30:
+                n_rl += 1
                 intel.append({"title": v.get("post_title") or "", "source": "ransomlook", "kind": "leak-post",
                               "summary": (v.get("description") or "")[:260], "url": v.get("link") or "",
-                              "published": d, "extra": {}})
+                              "published": (v.get("discovered") or "").replace(" ", "T"), "extra": {}})
         stamps["ransomlook"] = _now_iso()
     except Exception as e:
         errors["ransomlook"] = str(e)
-    if posts:
-        posts.sort(key=lambda p: p.get("date") or "", reverse=True)
-        new["posts"] = posts
 
     # gangs: ransomware.live groups + deepdarkCTI + RansomLook names
     try:
@@ -241,7 +359,7 @@ def _ingest():
     except Exception as e:
         errors["rl_groups"] = str(e)
 
-    # alerts and news
+    # alerts and advisories
     def feed(name, fn):
         try:
             intel.extend(fn())
@@ -260,8 +378,6 @@ def _ingest():
                  "url": "https://nvd.nist.gov/vuln/detail/" + (x.get("cveID") or ""),
                  "extra": {"cve": x.get("cveID"), "vendor": x.get("vendorProject")}} for x in vulns]
     feed("cisa_kev", kev)
-    feed("bleepingcomputer", lambda: _rss("https://www.bleepingcomputer.com/feed/", "bleepingcomputer", "news", 20))
-    feed("krebs", lambda: _rss("https://krebsonsecurity.com/feed/", "krebs", "news", 10))
     feed("sans_isc", lambda: _rss("https://isc.sans.edu/rssfeed.xml", "sans-isc", "diary", 10,
                                   skip=lambda t: "stormcast" in t.lower()))
 
@@ -282,13 +398,19 @@ def _ingest():
         intel.sort(key=lambda i: str(i.get("published") or ""), reverse=True)
         new["intel"] = intel
 
+    # dark web news
+    news, nerr, nstamps = _build_news(new["gangs"])
+    errors.update(nerr)
+    stamps.update(nstamps)
+    if news:
+        new["news"] = news
+
     with _lock:
         STATE.update(new)
         STATE["last_refresh"] = {**STATE.get("last_refresh", {}), **stamps}
         STATE["errors"] = errors
         try:
-            SNAPSHOT.write_text(json.dumps({"schema": SCHEMA_VERSION,
-                                            **{k: STATE[k] for k in ("victims", "posts", "gangs", "intel", "last_refresh", "errors")}}))
+            _save_snapshot()
         except Exception as e:
             STATE["errors"]["snapshot"] = str(e)
     _refreshing = False
@@ -304,8 +426,7 @@ def _place():
     try:
         geo.geo_pass(STATE["victims"], GEO, DATA_DIR)
         _apply_geo(STATE["victims"])
-        SNAPSHOT.write_text(json.dumps({"schema": SCHEMA_VERSION,
-                                        **{k: STATE[k] for k in ("victims", "posts", "gangs", "intel", "last_refresh", "errors")}}))
+        _save_snapshot()
     except Exception as e:
         STATE["errors"]["geo"] = str(e)
     finally:
@@ -332,7 +453,7 @@ def is_stale():
 # ----------------------------------------------------------------- users, sessions, activity
 DUMMY_HASH = generate_password_hash("not-a-real-password")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
-EVENTS_FROM_CLIENT = {"tab_view", "search", "filter", "region_change", "copy_leak_site", "export", "modal_open"}
+EVENTS_FROM_CLIENT = {"tab_view", "search", "filter", "region_change", "copy_leak_site", "export", "modal_open", "victim_view"}
 _rate = defaultdict(deque)
 
 
@@ -384,10 +505,11 @@ def current_user():
     uid = session.get("uid")
     if LEGACY:
         if uid == "legacy" and session.get("ok"):
-            g.user = {"id": 0, "username": "admin", "role": "admin", "region": session.get("region", ""), "legacy": True}
+            g.user = {"id": 0, "username": "admin", "role": "admin", "region": session.get("region", ""), "legacy": True,
+                      "prev_visit": session.get("prev_visit")}
     elif isinstance(uid, int):
         try:
-            row = db.one("select id, username, role, region, active, password_hash from users where id=%s", (uid,))
+            row = db.one("select id, username, role, region, active, password_hash, prev_visit from users where id=%s", (uid,))
             if row and row["active"] and session.get("pwv") == _pwv(row["password_hash"]):
                 g.user = row
         except Exception:
@@ -496,11 +618,33 @@ def health():
                    refreshing=_refreshing, placing=_geo_running)
 
 
+def touch_visit(u):
+    """Record this page open and return when the user's PREVIOUS visit was. A visit starts when a page is opened more
+    than 30 minutes after the last one, so reloading does not reset "new since your last visit"."""
+    now = datetime.now(timezone.utc)
+    if LEGACY:
+        last, prev = session.get("last_visit"), session.get("prev_visit")
+        if not last or (now - (_ts(last) or now)).total_seconds() > 1800:
+            prev = last
+        session["prev_visit"], session["last_visit"] = prev, now.isoformat()
+        u["prev_visit"] = prev
+        return prev
+    row = db.run("""update users set prev_visit = case when last_visit is null or last_visit < now() - interval '30 minutes'
+                    then last_visit else prev_visit end, last_visit = now() where id=%s returning prev_visit""", (u["id"],))
+    u["prev_visit"] = row["prev_visit"] if row else None
+    return u["prev_visit"].astimezone(timezone.utc).isoformat() if u["prev_visit"] else None
+
+
 @app.post("/api/open")
 def api_open():
     log("page_open")
+    prev = None
+    try:
+        prev = touch_visit(current_user())
+    except Exception:
+        pass
     started = start_refresh() if is_stale() else False
-    return jsonify(refreshing=_refreshing, started=started, stale=is_stale())
+    return jsonify(refreshing=_refreshing, started=started, stale=is_stale(), prev_visit=prev)
 
 
 @app.post("/api/refresh")
@@ -513,8 +657,9 @@ def api_refresh():
 @app.get("/api/me")
 def api_me():
     u = current_user()
+    p = _prev_visit()
     return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY,
-                   regions=geo.FILTER_REGIONS)
+                   regions=geo.FILTER_REGIONS, prev_visit=p.isoformat() if p else None)
 
 
 @app.put("/api/me/region")
@@ -578,10 +723,12 @@ def _admin_count_excluding(uid):
 @admin_required
 def admin_users():
     rows = db.many("""select u.id, u.username, u.role, u.region, u.active, u.created_at, u.created_by, u.last_login,
-                      (select count(*) from activity a where a.user_id = u.id) as events
+                      (select count(*) from activity a where a.user_id = u.id) as events,
+                      (select max(a.ts) from activity a where a.user_id = u.id) as last_activity
                       from users u order by lower(u.username)""")
     return jsonify(users=[{**r, "created_at": r["created_at"].isoformat(),
-                           "last_login": r["last_login"].isoformat() if r["last_login"] else None} for r in rows],
+                           "last_login": r["last_login"].isoformat() if r["last_login"] else None,
+                           "last_activity": r["last_activity"].isoformat() if r["last_activity"] else None} for r in rows],
                    regions=geo.FILTER_REGIONS)
 
 
@@ -718,17 +865,19 @@ PLACEABLE = geo.REGIONS + [geo.OVERSEAS]
 def admin_placement_set():
     b = request.get_json(silent=True) or {}
     title, rocu, note = (b.get("title") or "").strip(), b.get("rocu", ""), (b.get("note") or "").strip()[:200]
+    town = (b.get("town") or "").strip()[:60]
     key = geo.norm(title)
     if not key or not any(v["key"] == key for v in STATE["victims"]):
         return jsonify(error="Unknown victim."), 404
     if rocu not in PLACEABLE:
         return jsonify(error="Choose a ROCU region, Scotland, Northern Ireland or Overseas / not UK."), 400
-    db.run("""insert into placement_overrides (key, victim, rocu, note, set_by) values (%s,%s,%s,%s,%s)
-              on conflict (key) do update set rocu=excluded.rocu, note=excluded.note, set_by=excluded.set_by, set_at=now()""",
-           (key, title, rocu, note, current_user()["username"]))
+    db.run("""insert into placement_overrides (key, victim, rocu, note, town, set_by) values (%s,%s,%s,%s,%s,%s)
+              on conflict (key) do update set rocu=excluded.rocu, note=excluded.note, town=excluded.town,
+                                              set_by=excluded.set_by, set_at=now()""",
+           (key, title, rocu, note, town, current_user()["username"]))
     load_overrides()
     _apply_geo(STATE["victims"])
-    log("placement_set", f"{title} -> {rocu}" + (f" ({note})" if note else ""))
+    log("placement_set", f"{title} -> {rocu}" + (f" ({town})" if town else "") + (f" [{note}]" if note else ""))
     return jsonify(ok=True)
 
 
@@ -766,19 +915,61 @@ def _counts(key, label_default="Unknown"):
     return Counter((v.get(key) or label_default) for v in _uk())
 
 
+def _int(name, default, hi=500):
+    try:
+        return max(0, min(int(request.args.get(name, default)), hi))
+    except ValueError:
+        return default
+
+
+def _ts(s):
+    """Parse an ISO timestamp to an aware UTC datetime (None if it cannot be read)."""
+    try:
+        d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _prev_visit():
+    p = (current_user() or {}).get("prev_visit")
+    if isinstance(p, datetime):
+        return p if p.tzinfo else p.replace(tzinfo=timezone.utc)
+    return _ts(p) if p else None
+
+
+VIEW_KEYS = ("post_title", "group", "activity", "discovered", "seen", "year", "website", "post_url", "rocu", "force", "force_name",
+             "town", "region_source", "registered_name", "manual", "override_note", "description", "reposts")
+
+
+def _view(v, prev):
+    """The fields the browser needs for a victim (not the internal matching fields), plus 'new since your last visit'."""
+    d = {k: v.get(k, "") for k in VIEW_KEYS}
+    t = _ts(v.get("seen"))
+    d["new"] = bool(prev and t and t > prev)
+    return d
+
+
 @app.get("/api/summary")
 def api_summary():
     v = _uk()
     allv = STATE["victims"]
-    years = Counter(x["year"] for x in v)
+    years = Counter(x["year"] for x in v if x["year"] != "unknown")
     by_region = Counter(x["rocu"] for x in allv)
     src = Counter(x["region_source"] or "none" for x in allv)
+    sectors = _counts("activity")
+    unclassified = sectors.pop("Unclassified", 0)       # kept out of the ranking, reported separately
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    prev = _prev_visit()
     return jsonify(
-        uk_total=len(v), uk_all=len(allv), region=_region(),
-        attacks_total=len(STATE["posts"]) or len(allv), gangs_total=len(STATE["gangs"]),
+        uk_total=len(v), uk_all=len(allv), region=_region(), gangs_total=len(STATE["gangs"]),
+        new_total=sum(1 for x in v if prev and (_ts(x.get("seen")) or prev) > prev),
+        news_7d=sum(1 for n in STATE["news"] if (_ts(n["published"]) or cutoff) > cutoff),
         by_year=[{"year": y, "count": n} for y, n in sorted(years.items())][-8:],
         top_gangs=[{"group": g_, "count": n} for g_, n in _counts("group").most_common(8)],
-        top_sectors=[{"sector": s, "count": n} for s, n in _counts("activity").most_common(8)],
+        top_sectors=[{"sector": s, "count": n} for s, n in sectors.most_common(8)],
+        unclassified={"count": unclassified, "share": _share(unclassified, len(v))},
+        sector_source="Sector as classified by ransomware.live; victims it has not classified are listed separately.",
         by_region=[{"region": r, "count": by_region.get(r, 0)} for r in geo.FILTER_REGIONS],
         placement={"total": len(allv), "placed": len(allv) - by_region.get("Unplaced", 0) - by_region.get(geo.OVERSEAS, 0),
                    "from_text": src.get("text", 0), "from_postcode": src.get("postcode", 0),
@@ -797,8 +988,12 @@ def api_detail():
     kind = request.args.get("kind", "sector")
     key, title = KINDS.get(kind, KINDS["sector"])
     total = len(_uk())
-    items = [{"label": k, "count": n, "share": _share(n, total)} for k, n in _counts(key).most_common(30)]
-    return jsonify(title=title + (f" ({_region()})" if _region() else ""), items=items)
+    c = _counts(key)
+    unclassified = c.pop("Unclassified", 0) if kind == "sector" else 0
+    items = [{"label": k, "count": n, "share": _share(n, total)} for k, n in c.most_common(30)]
+    if unclassified:
+        items.append({"label": "Unclassified", "count": unclassified, "share": _share(unclassified, total)})
+    return jsonify(title=title + (f" ({_region()})" if _region() else ""), items=items, total=total)
 
 
 @app.get("/api/summary/slice")
@@ -812,50 +1007,78 @@ def api_slice():
     explain = {"year": f"Victims first published in {label}.", "gang": f"Victims claimed by {label}.",
                "sector": f"Victims in the {label} sector."}[kind if kind in KINDS else "sector"]
     rows.sort(key=lambda v: str(v.get("seen") or ""), reverse=True)
+    prev = _prev_visit()
     return jsonify(label=label, explain=explain, count=len(rows), share=_share(len(rows), len(_uk())),
                    split_title="By sector" if other == "activity" else "By gang",
-                   split=[{"label": k, "count": n} for k, n in split], victims=rows[:40])
+                   split=[{"label": k, "count": n} for k, n in split], victims=[_view(v, prev) for v in rows[:40]])
 
 
-def _int(name, default, hi=500):
-    try:
-        return max(0, min(int(request.args.get(name, default)), hi))
-    except ValueError:
-        return default
+SORTS = {"name": lambda v: v["post_title"].lower(), "group": lambda v: v["group"].lower(),
+         "sector": lambda v: v["activity"].lower(), "seen": lambda v: str(v.get("seen") or ""),
+         "region": lambda v: (v["rocu"].lower(), (v.get("town") or "").lower())}
 
 
-@app.get("/api/victims")
-def api_victims():
-    q = request.args.get("q", "").lower()
+def _filter_victims():
     items = _uk()
     if request.args.get("group"):
         items = [v for v in items if v["group"] == request.args["group"]]
     if request.args.get("sector"):
         items = [v for v in items if v["activity"] == request.args["sector"]]
+    q = request.args.get("q", "").lower()
     if q:
-        items = [v for v in items if q in (v["post_title"] + " " + v["website"] + " " + v["group"]).lower()]
-    items = sorted(items, key=lambda v: str(v.get("seen") or ""), reverse=True)
-    off, lim = _int("offset", 0, 10**6), _int("limit", 200)
+        items = [v for v in items if q in (v["post_title"] + " " + v["website"] + " " + v["group"] + " " + (v.get("town") or "")).lower()]
+    if request.args.get("new") == "1":
+        prev = _prev_visit()
+        items = [v for v in items if prev and (_ts(v.get("seen")) or prev) > prev]
+    key = request.args.get("sort", "seen")
+    desc = request.args.get("dir", "desc") != "asc"
+    return sorted(items, key=SORTS.get(key, SORTS["seen"]), reverse=desc)
+
+
+@app.get("/api/victims")
+def api_victims():
+    items = _filter_victims()
+    off, lim = _int("offset", 0, 10**6), max(1, _int("limit", 50, 500))
     allv = STATE["victims"]
+    prev = _prev_visit()
     facets = {"groups": sorted({v["group"] for v in allv if v["group"]}, key=str.lower),
               "sectors": sorted({v["activity"] for v in allv if v["activity"]})}
-    return jsonify(total=len(items), items=items[off:off + lim], facets=facets)
+    return jsonify(total=len(items), offset=off, limit=lim, items=[_view(v, prev) for v in items[off:off + lim]],
+                   facets=facets, new_total=sum(1 for v in _uk() if _view(v, prev)["new"]))
 
 
-@app.get("/api/posts")
-def api_posts():
-    q = request.args.get("q", "").lower()
-    vmap = {v["key"]: v["rocu"] for v in STATE["victims"]}
-    items = []
-    for p in STATE["posts"]:
-        rocu = vmap.get(geo.norm(p["title"]), "") if p.get("country") in ("GB", "") else ""
-        items.append(dict(p, rocu=rocu))
-    r = _region()
-    if r:
-        items = [p for p in items if p["rocu"] == r]
-    if q:
-        items = [p for p in items if q in (p["title"] + " " + p["group"] + " " + p["detail"]).lower()]
-    return jsonify(total=len(items), items=items[:_int("limit", 250)])
+@app.get("/api/victims.csv")
+def api_victims_csv():
+    items = _filter_victims()[:5000]
+    out = io.StringIO()
+    wr = csv.writer(out)
+    wr.writerow(["victim", "town_or_district", "region_rocu", "police_force", "region_basis", "group", "sector",
+                 "first_seen_utc", "website"])
+    safe = lambda s: ("'" + str(s)) if str(s)[:1] in ("=", "+", "-", "@") else str(s)      # no spreadsheet formula injection
+    for v in items:
+        wr.writerow([safe(v["post_title"]), safe(v.get("town") or ""), v["rocu"], v.get("force_name", ""),
+                     v.get("region_source", ""), safe(v["group"]), v["activity"], v.get("seen", ""), safe(v["website"])])
+    log("export", f"victims csv ({len(items)} rows" + (f", {_region()}" if _region() else "") + ")")
+    return Response(out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=evileye-victims.csv"})
+
+
+@app.get("/api/trend")
+def api_trend():
+    """UK victims first seen per week (Monday start), for the selected region."""
+    weeks = max(2, _int("weeks", 12, 52))
+    today = datetime.now(timezone.utc).date()
+    this_monday = today - timedelta(days=today.weekday())
+    counts = Counter()
+    for v in _uk():
+        t = _ts(v.get("seen"))
+        if t:
+            d = t.astimezone(timezone.utc).date()
+            counts[d - timedelta(days=d.weekday())] += 1
+    series = [{"week": (this_monday - timedelta(weeks=i)).isoformat(), "count": counts.get(this_monday - timedelta(weeks=i), 0)}
+              for i in range(weeks - 1, -1, -1)]
+    done = [s["count"] for s in series[:-1]]            # the current week is still in progress
+    return jsonify(series=series, average=round(sum(done) / len(done), 1) if done else 0, region=_region())
 
 
 @app.get("/api/gangs")
@@ -885,18 +1108,135 @@ def api_intel():
     return jsonify(total=len(items), items=items[:_int("limit", 120)])
 
 
+# ---- dark web news
+def _news_public(n):
+    return {k: n.get(k) for k in ("title", "url", "source", "source_name", "published", "summary", "cats", "themes", "groups", "uk")}
+
+
+@app.get("/api/news")
+def api_news():
+    items = STATE["news"]
+    src, theme, q = request.args.get("source"), request.args.get("theme"), request.args.get("q", "").lower()
+    days = _int("days", 0, 365)
+    if days:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        items = [n for n in items if (_ts(n["published"]) or cutoff) >= cutoff]
+    if src:
+        items = [n for n in items if n["source"] == src]
+    if theme:
+        items = [n for n in items if theme in n["themes"]]
+    if request.args.get("uk") == "1":
+        items = [n for n in items if n["uk"]]
+    if request.args.get("group"):
+        items = [n for n in items if request.args["group"] in n["groups"]]
+    if q:
+        items = [n for n in items if q in (n["title"] + " " + n["summary"]).lower()]
+    off, lim = _int("offset", 0, 10**6), max(1, _int("limit", 40, 200))
+    sources = Counter((n["source"], n["source_name"]) for n in STATE["news"])
+    return jsonify(total=len(items), items=[_news_public(n) for n in items[off:off + lim]],
+                   sources=[{"id": i, "name": nm, "count": c} for (i, nm), c in sources.most_common()],
+                   themes=[t for t, _ in THEMES])
+
+
+@app.get("/api/news/top")
+def api_news_top():
+    """The three items to show on the welcome page: highest score after a small recency penalty, at most two per source."""
+    now = datetime.now(timezone.utc)
+    ranked = []
+    for n in STATE["news"]:
+        t = _ts(n["published"])
+        if t and (now - t) <= timedelta(days=7):
+            ranked.append((n["score"] - (now - t).total_seconds() / 3600 / 24, n))
+    out, per = [], Counter()
+    for _, n in sorted(ranked, key=lambda x: -x[0]):
+        if per[n["source"]] < 2:
+            out.append(_news_public(n))
+            per[n["source"]] += 1
+        if len(out) == 3:
+            break
+    return jsonify(items=out, total_7d=len(ranked))
+
+
+@app.get("/api/news/summary")
+def api_news_summary():
+    """A rule-based briefing built from the headlines, themes, groups and sources: it does not read the articles."""
+    days = max(1, _int("days", 7, 30))
+    now = datetime.now(timezone.utc)
+    cur, prev = [], []
+    for n in STATE["news"]:
+        t = _ts(n["published"])
+        if not t:
+            continue
+        age = now - t
+        if age <= timedelta(days=days):
+            cur.append(n)
+        elif age <= timedelta(days=2 * days):
+            prev.append(n)
+    themes = Counter(t for n in cur for t in n["themes"])
+    groups = Counter(g_ for n in cur for g_ in n["groups"])
+    sources = Counter(n["source_name"] for n in cur)
+    dwi = [n for n in cur if n["source"] == "darkwebinformer"]
+    dwi_cats = Counter(c for n in dwi for c in n["cats"])
+    uk = [n for n in cur if n["uk"]]
+    daily = Counter((_ts(n["published"]).date()) for n in cur)
+    series = [{"date": (now.date() - timedelta(days=i)).isoformat(), "count": daily.get(now.date() - timedelta(days=i), 0)}
+              for i in range(days - 1, -1, -1)]
+    # Feeds hold different amounts of history (some a few days, some weeks). A week-on-week change is only honest for
+    # sources whose feed reaches back across BOTH windows, so compare just those.
+    oldest = {}
+    for n in STATE["news"]:
+        t = _ts(n["published"])
+        if t:
+            oldest[n["source"]] = min(oldest.get(n["source"], t), t)
+    deep = {sid for sid, t in oldest.items() if now - t >= timedelta(days=2 * days)}
+    c_deep = sum(1 for n in cur if n["source"] in deep)
+    p_deep = sum(1 for n in prev if n["source"] in deep)
+    coverage = len(deep)
+    change = round(100 * (c_deep - p_deep) / p_deep) if p_deep and c_deep is not None and deep else None
+    th = themes.most_common()
+    parts = []
+    if cur:
+        parts.append(f"In the last {days} days EvilEye tracked {len(cur)} dark web news items from {len(sources)} sources"
+                     + (f" ({'up' if change >= 0 else 'down'} {abs(change)}% on the previous {days} days, across the {coverage} sources with enough history to compare)." if change is not None else "."))
+        if th:
+            lead = f"{th[0][0]} led with {th[0][1]} items ({round(100 * th[0][1] / len(cur))}%)"
+            if len(th) > 1:
+                lead += ", followed by " + " and ".join(f"{t} ({c})" for t, c in th[1:3])
+            parts.append(lead + ".")
+        if groups:
+            parts.append("Most-named ransomware groups: " + ", ".join(f"{g_} ({c})" for g_, c in groups.most_common(3)) + ".")
+        if dwi:
+            claims = sum(c for k, c in dwi_cats.items() if re.search(r"breach|leak", k, re.I))
+            parts.append(f"Dark Web Informer posted {len(dwi)} items, {claims} of them data breach or leak claims.")
+        parts.append(f"{len(uk)} item{'s' if len(uk) != 1 else ''} mention the UK." if uk else "No items mention the UK.")
+        busy = max(series, key=lambda s: s["count"])
+        if busy["count"]:
+            parts.append(f"Busiest day: {datetime.fromisoformat(busy['date']).strftime('%a %d %b')} ({busy['count']} items).")
+    else:
+        parts.append(f"No dark web news items in the last {days} days yet: refresh to load the feeds.")
+    return jsonify(days=days, total=len(cur), previous=len(prev), change=change, comparable_sources=coverage, briefing=" ".join(parts),
+                   themes=[{"theme": t, "count": c, "share": _share(c, len(cur))} for t, c in th],
+                   groups=[{"group": g_, "count": c} for g_, c in groups.most_common(8)],
+                   sources=[{"source": s, "count": c} for s, c in sources.most_common()],
+                   claim_types=[{"type": k, "count": c} for k, c in dwi_cats.most_common(6)],
+                   uk_count=len(uk), series=series,
+                   note="Built from headlines, categories and ransomware-group names. It does not read the articles.")
+
+
 @app.get("/api/ticker")
 def api_ticker():
     """Five most recent UK victims, and five most recent in the signed-in user's region. Read from the server's
     cache only: this never calls an external service."""
     u = current_user()
     region = u["region"]
+    prev = _prev_visit()
     # skip anonymous "Company #123 [PENDING EXPOSURE]" placeholders: they say nothing useful in a ticker
     named = [v for v in STATE["victims"] if not re.match(r"^Company #\d+", v["post_title"])]
     recent = sorted(named, key=lambda v: str(v.get("seen") or ""), reverse=True)
     uk_recent = [v for v in recent if v["rocu"] != geo.OVERSEAS]       # probable overseas HQs are not UK incidents
     pick = lambda v: {"title": v["post_title"], "group": v["group"], "sector": v["activity"], "seen": v.get("seen"),
-                      "rocu": v["rocu"], "force": v["force_name"], "website": v["website"]}
+                      "rocu": v["rocu"], "force": v["force_name"], "town": v.get("town", ""), "website": v["website"],
+                      "new": _view(v, prev)["new"]}
     return jsonify(region=region, uk=[pick(v) for v in uk_recent[:5]],
                    regional=[pick(v) for v in [x for x in recent if x["rocu"] == region][:5]] if region else [],
                    updated=STATE.get("last_refresh", {}).get("rl_victims_gb"))

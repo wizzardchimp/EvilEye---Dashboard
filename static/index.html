@@ -7,17 +7,17 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=30">
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
         <button id="awake" class="mark" type="button" aria-pressed="false" aria-label="Keep screen on">
-          <img class="mark-off" src="/static/mark-off.png" width="58" height="60" alt="">
-          <img class="mark-on" src="/static/mark-on.png" width="58" height="60" alt="">
+          <img class="mark-off" src="/static/mark-off.png" width="52" height="54" alt="">
+          <img class="mark-on" src="/static/mark-on.png" width="52" height="54" alt="">
         </button>
-        <a id="home" class="brand-text" href="/" title="Home">
+        <a id="home" class="brand-text" href="/">
           <h1 class="wordmark">Evil<span class="eye">Eye</span></h1>
           <p class="tagline">the private eye on the patch</p>
         </a>
@@ -28,10 +28,18 @@
           <select id="region" class="search" aria-label="ROCU region"><option value="">All UK</option></select>
         </label>
         <div id="last-updated" class="updated">syncing&hellip;</div>
-        <button id="refresh-now" class="more" type="button">Refresh</button>
-        <button id="theme" class="more icon-btn" type="button" title="Invert colour scheme (light theme)" aria-label="Invert colour scheme" aria-pressed="false"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg></button>
-        <button id="usermenu" class="more" type="button" aria-haspopup="dialog">Account</button>
-        <a class="more" href="/logout">Log out</a>
+        <button id="refresh-now" class="more icon-btn" type="button" title="Refresh data" aria-label="Refresh data">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+        <button id="theme" class="more icon-btn" type="button" title="Invert colour scheme (light theme)" aria-label="Invert colour scheme" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
+        </button>
+        <button id="usermenu" class="more icon-btn" type="button" title="Account" aria-label="Account" aria-haspopup="dialog">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
+        <a class="more icon-btn" href="/logout" title="Log out" aria-label="Log out">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </a>
       </div>
     </div>
   </header>
@@ -39,15 +47,19 @@
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
     <button class="tab" data-tab="victims">UK Victims</button>
-    <button class="tab" data-tab="posts">Attack Feed</button>
+    <button class="tab" data-tab="news">Dark Web News</button>
     <button class="tab" data-tab="gangs">Gang Catalog</button>
-    <button class="tab" data-tab="alerts">Alerts &amp; News</button>
+    <button class="tab" data-tab="alerts">Alerts</button>
     <button class="tab admin-only" data-tab="users" hidden>Users</button>
     <button class="tab admin-only" data-tab="activity" hidden>Activity</button>
   </nav>
+  <div class="filterbar" id="filterbar" hidden>
+    <span class="fb">Showing <strong id="fb-region"></strong> only <button type="button" id="fb-clear" aria-label="Show all UK">Show all UK &times;</button></span>
+  </div>
 
   <main>
     <section id="tab-overview" class="panel active">
+      <div id="newbar" class="newbar" hidden></div>
       <div class="ticker" aria-live="polite">
         <div class="ticker-col">
           <div class="ticker-head"><span class="live-dot"></span><h3>Latest UK incidents</h3><span id="tk-updated" class="meta"></span></div>
@@ -57,6 +69,10 @@
           <div class="ticker-head"><span class="live-dot"></span><h3>Latest in <span id="tk-region">your region</span></h3></div>
           <ul id="tk-reg" class="ticker-list"></ul>
         </div>
+      </div>
+      <div class="card news-top">
+        <div class="card-head"><h3>Dark web news &middot; top 3</h3><button id="news-all" class="more" type="button">All dark web news</button></div>
+        <div id="news-top" class="news-top-list"></div>
       </div>
       <div id="stat-cards" class="stat-grid"></div>
       <div class="card region-card" id="card-region">
@@ -76,38 +92,80 @@
         <div class="card" id="card-sector">
           <div class="card-head"><h3>Top sectors</h3><button class="more" type="button" data-detail="sector">More</button></div>
           <div id="chart-sectors" class="bars"></div>
+          <p id="sector-note" class="hint small"></p>
+        </div>
+        <div class="card" id="card-trend">
+          <div class="card-head"><h3>New victims per week</h3><span id="trend-meta" class="meta"></span></div>
+          <div id="chart-trend" class="trend"></div>
         </div>
       </div>
     </section>
 
     <section id="tab-victims" class="panel">
       <div class="toolbar">
-        <input id="vq" class="search" type="search" placeholder="Search victim, website, group&hellip;">
+        <input id="vq" class="search" type="search" placeholder="Search victim, town, website, group&hellip; (press /)">
         <select id="vgroup" class="search"><option value="">All groups</option></select>
         <select id="vsector" class="search"><option value="">All sectors</option></select>
+        <label class="chk" id="vnew-wrap" hidden><input type="checkbox" id="vnew"> <span id="vnew-label">New since your last visit</span></label>
         <button id="vrefresh" class="btn">Refresh</button>
+        <a id="vcsv" class="more" href="/api/victims.csv" title="Download the current list as CSV">Export CSV</a>
       </div>
       <p id="vcount" class="count"></p>
       <div id="victim-table-wrap" class="table-wrap">
-        <table class="table">
-          <thead><tr><th>Victim</th><th>Group</th><th>Sector</th><th>Discovered</th><th>Region</th></tr></thead>
+        <table class="table sortable">
+          <thead><tr>
+            <th class="sortable" data-sort="name">Victim <span class="arrow"></span></th>
+            <th class="sortable" data-sort="group">Group <span class="arrow"></span></th>
+            <th class="sortable" data-sort="sector">Sector <span class="arrow"></span></th>
+            <th class="sortable" data-sort="seen">First seen <span class="arrow"></span></th>
+            <th class="sortable" data-sort="region">Region <span class="arrow"></span></th>
+          </tr></thead>
           <tbody id="victim-rows"></tbody>
         </table>
       </div>
+      <div class="pager" id="vpager"></div>
     </section>
 
-    <section id="tab-posts" class="panel">
-      <div class="toolbar">
-        <input id="pq" class="search" type="search" placeholder="Filter posts across all sources&hellip;">
-        <button id="prefresh" class="btn">Refresh</button>
+    <section id="tab-news" class="panel">
+      <div class="news-head">
+        <div>
+          <h2 class="page-title">Dark web news</h2>
+          <p class="hint">Breach and leak claims, ransomware and underground activity from <a href="https://darkwebinformer.com" target="_blank" rel="noopener noreferrer">Dark Web Informer</a> and the security press. X blocks automated access, so Dark Web Informer is read from its own site feed. <a href="https://x.com/DarkWebInformer" target="_blank" rel="noopener noreferrer">@DarkWebInformer on X</a>.</p>
+        </div>
+        <label class="field">Summary period
+          <select id="nperiod" class="search"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option></select>
+        </label>
       </div>
-      <p id="pcount" class="count"></p>
-      <div id="post-list" class="post-list"></div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-head"><h3>Briefing</h3><span id="n-when" class="meta"></span></div>
+        <p id="n-briefing" class="briefing"></p>
+        <p id="n-note" class="hint small"></p>
+      </div>
+      <div id="n-stats" class="stat-grid"></div>
+      <div class="chart-grid">
+        <div class="card"><div class="card-head"><h3>Themes</h3></div><div id="n-themes" class="bars"></div></div>
+        <div class="card"><div class="card-head"><h3>Sources</h3></div><div id="n-sources" class="bars"></div></div>
+        <div class="card"><div class="card-head"><h3>Ransomware groups named</h3></div><div id="n-groups" class="bars"></div></div>
+        <div class="card"><div class="card-head"><h3>Items per day</h3></div><div id="n-daily" class="trend"></div><div id="n-claims" class="bars" style="margin-top:14px"></div></div>
+      </div>
+      <div class="toolbar">
+        <input id="nq" class="search" type="search" placeholder="Search dark web news&hellip; (press /)">
+        <select id="nsource" class="search"><option value="">All sources</option></select>
+        <select id="ntheme" class="search"><option value="">All themes</option></select>
+        <div class="radio-group" role="radiogroup" aria-label="UK filter">
+          <label><input type="radio" name="nuk" value="" checked> All</label>
+          <label><input type="radio" name="nuk" value="1"> Mentions UK</label>
+        </div>
+        <button id="nrefresh" class="btn">Refresh</button>
+      </div>
+      <p id="ncount" class="count"></p>
+      <div id="news-list" class="post-list"></div>
+      <p><button id="n-more" class="more" type="button" hidden>Load more</button></p>
     </section>
 
     <section id="tab-gangs" class="panel">
       <div class="toolbar">
-        <input id="gq" class="search" type="search" placeholder="Search gangs &amp; sources&hellip;">
+        <input id="gq" class="search" type="search" placeholder="Search gangs &amp; sources&hellip; (press /)">
         <select id="gsource" class="search">
           <option value="">All sources</option>
           <option value="ransomware.live">ransomware.live</option>
@@ -130,14 +188,12 @@
 
     <section id="tab-alerts" class="panel">
       <div class="toolbar">
-        <input id="aq" class="search" type="search" placeholder="Search alerts, CVEs, news&hellip;">
+        <input id="aq" class="search" type="search" placeholder="Search alerts, CVEs&hellip; (press /)">
         <select id="asource" class="search">
           <option value="">All sources</option>
           <option value="ncsc">NCSC</option>
           <option value="cisa">CISA KEV</option>
           <option value="hibp">Have I Been Pwned</option>
-          <option value="bleepingcomputer">BleepingComputer</option>
-          <option value="krebs">Krebs on Security</option>
           <option value="sans-isc">SANS ISC</option>
           <option value="ransomlook">RansomLook</option>
           <option value="ransomware.live">Press</option>
@@ -164,7 +220,7 @@
       </div>
       <div class="table-wrap">
         <table class="table">
-          <thead><tr><th>User</th><th>Role</th><th>Region</th><th>Status</th><th>Last login</th><th>Events</th><th>Actions</th></tr></thead>
+          <thead><tr><th>User</th><th>Role</th><th>Region</th><th>Status</th><th>Last login</th><th>Activity</th><th>Actions</th></tr></thead>
           <tbody id="user-rows"></tbody>
         </table>
       </div>
@@ -193,7 +249,8 @@
     Data: <a href="https://www.ransomware.live" target="_blank" rel="noopener">ransomware.live</a> ·
     <a href="https://www.ransomlook.io" target="_blank" rel="noopener">RansomLook</a> ·
     <a href="https://github.com/fastfire/deepdarkCTI" target="_blank" rel="noopener">deepdarkCTI</a> ·
-    NCSC · CISA KEV · Have I Been Pwned · BleepingComputer · Krebs on Security · SANS ISC.
+    NCSC · CISA KEV · Have I Been Pwned · SANS ISC · Dark Web Informer · DataBreaches.net · Hackread · The Record · The Hacker News ·
+    SecurityWeek · Dark Reading · BleepingComputer · Krebs on Security.
     Refreshes when you open the page or press Refresh. For research purposes only.
   </footer>
 
@@ -210,6 +267,15 @@
       <div id="modal-body"></div>
     </div>
   </div>
-  <script src="/static/app.js?v=25"></script>
+
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+  <aside id="drawer" class="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="dr-title">
+    <div class="drawer-head">
+      <h2 id="dr-title"></h2>
+      <button id="dr-close" class="more icon-btn" type="button" aria-label="Close details">&times;</button>
+    </div>
+    <div id="dr-body" class="drawer-body"></div>
+  </aside>
+  <script src="/static/app.js?v=30"></script>
 </body>
 </html>

@@ -94,6 +94,9 @@ GAZETTEER = {
     "police-scotland": "Scotland|Edinburgh|Glasgow|Aberdeen|Dundee|Inverness|Stirling|Paisley|Livingston|Falkirk|East Kilbride|Dunfermline|Kilmarnock|Fife|Lanarkshire|Highlands",
     "northern-ireland": "Northern Ireland|Belfast|Londonderry|Derry|Lisburn|Newry|Armagh|Craigavon|Ballymena",
 }
+# wide-area names (usually the first entry of each list, plus a few extras): used only to choose a better label
+COUNTYISH = {names.split("|")[0] for names in GAZETTEER.values()} | {"Greater London", "Tyne and Wear", "Tyneside", "Teesside",
+                                                                      "Cleveland", "Berkshire", "Oxfordshire", "Buckinghamshire"}
 _TERMS = sorted(((t, f) for f, names in GAZETTEER.items() for t in names.split("|")), key=lambda x: -len(x[0]))
 _TERM_RE = [(re.compile(r"(?<![\w-])" + re.escape(t) + r"(?![\w-])"), t, f) for t, f in _TERMS]
 POSTCODE_RE = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?)\s?(\d[A-Z]{2})\b")
@@ -124,8 +127,9 @@ def place_text(text):
         n, first = votes.get(force, (0, pos))
         votes[force] = (n + 1, min(first, pos))
     best = sorted(votes.items(), key=lambda kv: (-kv[1][0], kv[1][1]))[0][0]
-    term = next(t for p, f, t in sorted(hits) if f == best)
-    return best, term
+    cands = [t for p, f, t in sorted(hits) if f == best]
+    specific = [t for t in cands if t not in COUNTYISH]      # prefer "Stourbridge" over "West Midlands"
+    return best, (specific or cands)[0]
 
 
 def postcode_in(text):

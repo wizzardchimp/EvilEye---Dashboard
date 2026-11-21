@@ -6,8 +6,26 @@ Private ransomware-intel dashboard for the UK, broken down by ROCU (regional org
 dashboard (and the stored data is older than `STALE_MINUTES`), or when Refresh is pressed.
 
 ## Data sources
-ransomware.live (UK victims, recent victims, gang catalogue) · RansomLook · deepdarkCTI · NCSC · CISA KEV ·
-Have I Been Pwned (recent breaches) · BleepingComputer · Krebs on Security · SANS ISC diary.
+- **UK victims, gangs:** ransomware.live, RansomLook, deepdarkCTI.
+- **Alerts:** NCSC, CISA KEV, Have I Been Pwned, SANS ISC, RansomLook / ransomware.live press.
+- **Dark web news:** Dark Web Informer (its site feed: X blocks automated access), DataBreaches.net, Hackread, The Record,
+  The Hacker News, SecurityWeek, Dark Reading, BleepingComputer, Krebs on Security.
+
+## Dark web news
+Items from the news feeds are kept when they are dark-web relevant (Dark Web Informer always). Each is tagged with themes
+(ransomware, data breach / leak, access & credentials, malware, forums & marketplaces, law enforcement, vulnerabilities),
+ransomware groups named (matched against the gang catalogue; everyday-word names need a capital letter and ransomware context)
+and UK mentions. The welcome page shows the top three (score minus a small recency penalty, at most two per source). The
+**Dark Web News** tab has a rule-based briefing built from headlines, categories and group names (it does not read the
+articles). The week-on-week change only compares sources whose feed reaches back across both windows.
+
+## UK victims
+The list is de-duplicated (the same company claimed again by the same group is one victim). Sector is ransomware.live's own
+classification; victims it has not classified are reported separately as Unclassified, not ranked. Each row shows the
+company with its town or district in brackets, sorts by any column, pages 50 at a time and exports to CSV (respecting the
+region filter). Click a row for the full details drawer (description, how the region was decided, copy-only leak-site address,
+and for admins the manual region editor). "New" badges mark victims first seen since your previous visit (a visit starts when
+you open the page more than 30 minutes after the last one).
 
 ## Regions (ROCU)
 ROCUs are groupings of police forces: ROCU > force > organisation. The 43 forces of England and Wales map to 10 ROCUs;
