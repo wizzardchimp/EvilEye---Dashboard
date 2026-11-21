@@ -123,6 +123,24 @@ async function loadTicker() {
 setInterval(() => { if (document.visibilityState === "visible" && activeTab() === "overview") loadTicker(); }, 60000);
 
 // ------------------------------------------------------------------ overview
+function pickRegion(r) {
+  $("#region").value = r;
+  $("#region").dispatchEvent(new Event("change"));
+}
+$("#chart-regions").addEventListener("click", (e) => {
+  const t = e.target.closest(".rtile");
+  if (t) pickRegion(t.dataset.region === region ? "" : t.dataset.region);   // click the selected tile again to clear
+});
+$("#region-clear").addEventListener("click", () => pickRegion(""));
+// spread the tiles evenly over as few rows as fit (e.g. 14 tiles -> 7 + 7, not 8 + 6)
+function balanceStrip() {
+  const el = $("#chart-regions"), n = el.children.length;
+  if (!n || !el.clientWidth) return;
+  const fit = Math.max(1, Math.floor((el.clientWidth + 10) / 142));
+  const rows = Math.ceil(n / fit);
+  el.style.setProperty("--cols", Math.ceil(n / rows));
+}
+window.addEventListener("resize", debounce(balanceStrip, 150));
 async function loadOverview() {
   const holder = $("#stat-cards");
   const [y, g, s, rg] = ["chart-year", "chart-gangs", "chart-sectors", "chart-regions"].map((i) => $(`#${i}`));
@@ -138,13 +156,17 @@ async function loadOverview() {
     drawBars(y, d.by_year.map((r) => [r.year, r.count]));
     drawBars(g, d.top_gangs.map((r) => [r.group, r.count]));
     drawBars(s, d.top_sectors.map((r) => [r.sector, r.count]));
-    const rows = d.by_region.filter((r) => r.count > 0).map((r) => [r.region, r.count, +(100 * r.count / d.uk_all).toFixed(1)]);
-    drawBars(rg, rows);
-    rg.querySelectorAll(".bar-row").forEach((row, i) => {
-      row.classList.add("pick");
-      row.title = "Filter the dashboard to this region";
-      row.addEventListener("click", () => { $("#region").value = rows[i][0]; $("#region").dispatchEvent(new Event("change")); });
-    });
+    const max = Math.max(1, ...d.by_region.map((r) => r.count));
+    const tiles = d.by_region.filter((r) => r.count > 0);
+    rg.innerHTML = tiles.map((r) => `
+      <button type="button" class="rtile${r.region === region ? " active" : ""}${r.region === "Unplaced" || r.region === "Overseas / not UK" ? " dim" : ""}" data-region="${esc(r.region)}" aria-pressed="${r.region === region}" title="Filter the dashboard to ${esc(r.region)}">
+        <span class="rn">${r.region === "Unplaced" ? "Region unknown" : esc(r.region)}</span>
+        <span class="rc">${r.count}</span>
+        <span class="rs">${(100 * r.count / d.uk_all).toFixed(1)}% of UK</span>
+        <span class="rbar"><i style="width:${Math.max(3, (r.count / max) * 100)}%"></i></span>
+      </button>`).join("") || '<div class="ldr">no data yet</div>';
+    $("#region-clear").hidden = !region;
+    balanceStrip();
     const p = d.placement;
     $("#region-note").innerHTML = `<strong>${p.placed}</strong> of ${p.total} victims placed to a UK region (${p.from_text} from place names, ${p.from_postcode} postcodes, ${p.from_companies_house} Companies House, ${p.from_manual} set manually). ` +
       `${p.overseas} look overseas / not UK, ${p.unplaced} still unplaced. ${p.api_enabled ? "" : "Companies House lookup is off: set COMPANIES_HOUSE_KEY. "}${p.running ? "<em>Looking up regions now…</em>" : ""}`;

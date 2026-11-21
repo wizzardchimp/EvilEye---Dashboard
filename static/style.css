@@ -147,6 +147,24 @@ h3.sub { font-size: 11.5px; color: var(--muted); font-weight: 600; text-transfor
 .stat.hl .num { color: var(--accent); }
 .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-bottom: 18px; }
 
+/* ---------- region strip (horizontal) ---------- */
+.region-card { margin-bottom: 18px; }
+.region-strip { --cols: 7; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 10px; }
+.rtile {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px 11px;
+}
+.rtile:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--surface-2) 70%, var(--surface)); }
+.rtile.active { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent) inset; }
+.rtile .rn { font-size: 11.5px; font-weight: 600; color: var(--text-2); line-height: 1.25; min-height: 29px; }
+.rtile .rc { font-size: 24px; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.rtile .rs { font-size: 11.5px; color: var(--muted); }
+.rtile .rbar { display: block; height: 4px; border-radius: 3px; background: var(--border); margin-top: 7px; overflow: hidden; }
+.rtile .rbar i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--bar-a), var(--accent)); }
+.rtile.dim .rc { color: var(--muted); }
+.rtile.dim .rbar i { background: var(--muted); }
+.region-card .hint { margin: 12px 0 0; }
+
 /* ---------- bars ---------- */
 .bars { display: flex; flex-direction: column; gap: 9px; }
 .bar-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
