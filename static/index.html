@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=35">
+  <link rel="stylesheet" href="/static/style.css?v=37">
 </head>
 <body>
   <header class="topbar">
@@ -289,6 +289,32 @@
     </div>
     <div id="dr-body" class="drawer-body"></div>
   </aside>
-  <script src="/static/app.js?v=36"></script>
+  <div id="onboard" class="onboard" hidden role="dialog" aria-modal="true" aria-labelledby="ob-title">
+    <div class="ob-card">
+      <div id="ob-step1" class="ob-step">
+        <img class="ob-mark" src="/static/mark-off.png" width="76" height="86" alt="">
+        <h1 id="ob-title" class="ob-title">Welcome to Evil<span class="eye">Eye</span></h1>
+        <p class="ob-sub">the private eye on the patch</p>
+        <ul class="ob-points">
+          <li><span class="ob-ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg></span>
+            <div><strong>Tracks UK ransomware victims.</strong> Companies named on ransomware gang leak sites, placed by police region and refreshed whenever you open it, with new arrivals flagged since your last visit.</div></li>
+          <li><span class="ob-ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+            <div><strong>Briefs you on the dark web.</strong> Breach claims, leaks and underground activity from specialist and security-press sources, summarised at a glance with the ransomware groups behind them.</div></li>
+          <li><span class="ob-ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
+            <div><strong>Focuses on your patch.</strong> Pick your regional organised crime unit and every page, chart and live ticker narrows to your area.</div></li>
+        </ul>
+        <p class="ob-fine">For research purposes only. Dark web addresses are copy-only: this dashboard never opens them.</p>
+        <div class="ob-actions"><button type="button" id="ob-next" class="btn big">Choose your region <span aria-hidden="true">&rarr;</span></button><button type="button" id="ob-skip" class="link">Skip for now</button></div>
+      </div>
+      <div id="ob-step2" class="ob-step" hidden>
+        <h2 id="ob-title2" class="ob-title">Choose your local ROCU region</h2>
+        <p class="ob-sub2">A regional organised crime unit (ROCU) covers several police forces. Pick yours and the dashboard, the ticker and your views focus on your area. You can change it at any time from the Region menu.</p>
+        <div id="ob-regions" class="ob-regions" role="radiogroup" aria-labelledby="ob-title2"></div>
+        <div class="ob-actions"><button type="button" id="ob-back" class="more">&larr; Back</button><button type="button" id="ob-go" class="btn big">Start</button><button type="button" id="ob-skip2" class="link">Skip for now</button></div>
+      </div>
+      <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i></div>
+    </div>
+  </div>
+  <script src="/static/app.js?v=38"></script>
 </body>
 </html>

@@ -607,6 +607,7 @@ const EVENT_LABEL = {
   password_change: "Changed own password", password_change_failed: "Password change failed",
   user_create: "Created a user", user_update: "Updated a user", user_delete: "Deleted a user",
   placement_set: "Set a victim's region", placement_clear: "Cleared a manual region",
+  onboarding_done: "Finished the welcome tour", onboarding_skipped: "Skipped the welcome tour",
 };
 const eventLabel = (e) => EVENT_LABEL[e] || (e ? e.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : "");
 const eventBadge = (r) => `<span class="badge ${/failed|delete|locked/.test(r.event + r.detail) ? "off" : "src"}" title="${esc(r.event)}">${esc(eventLabel(r.event))}</span>`;
@@ -745,6 +746,59 @@ $("#act-more").addEventListener("click", () => loadActivity(true));
 ["act-user", "act-event"].forEach((id) => $(`#${id}`).addEventListener("change", () => loadActivity()));
 $("#act-q").addEventListener("input", debounce(() => loadActivity(), 350));
 
+// ------------------------------------------------------------------ welcome tour: what EvilEye is, then choose your ROCU region
+const ob = { region: "", data: null, step: 1 };
+const obEl = $("#onboard");
+function showObStep(n) {
+  ob.step = n;
+  $("#ob-step1").hidden = n !== 1; $("#ob-step2").hidden = n !== 2;
+  obEl.querySelector(".ob-card").classList.toggle("wide", n === 2);
+  $("#ob-dot1").classList.toggle("on", n === 1); $("#ob-dot2").classList.toggle("on", n === 2);
+  obEl.setAttribute("aria-labelledby", n === 1 ? "ob-title" : "ob-title2");
+  if (n === 2) renderObRegions();
+  setTimeout(() => (n === 1 ? $("#ob-next") : obEl.querySelector('.ob-tile[aria-checked="true"]') || $("#ob-go")).focus(), 30);
+}
+async function renderObRegions() {
+  if (!ob.data) { try { ob.data = await api("/api/regions"); } catch (e) { ob.data = { regions: [], total: 0 }; } }
+  const tiles = [{ name: "", label: "All UK", forces: ["The national picture: every region together"], count: ob.data.total }, ...ob.data.regions.map((r) => ({ ...r, label: r.name }))];
+  $("#ob-regions").innerHTML = tiles.map((t) => `<button type="button" role="radio" class="ob-tile" aria-checked="${t.name === ob.region}" data-region="${esc(t.name)}" tabindex="${t.name === ob.region ? 0 : -1}">
+      <span class="n">${esc(t.label)}${t.count ? `<em>${t.count} victim${t.count === 1 ? "" : "s"}</em>` : ""}</span><span class="f">${esc(t.forces.join(" · "))}</span></button>`).join("");
+}
+function selectObRegion(btn) {
+  ob.region = btn.dataset.region;
+  obEl.querySelectorAll(".ob-tile").forEach((b) => { const on = b === btn; b.setAttribute("aria-checked", String(on)); b.tabIndex = on ? 0 : -1; });
+  btn.focus();
+}
+$("#ob-regions").addEventListener("click", (e) => { const b = e.target.closest(".ob-tile"); if (b) selectObRegion(b); });
+$("#ob-regions").addEventListener("keydown", (e) => {          // arrow keys move through the options like a radio group
+  const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  if (!(e.key in keys)) return;
+  const all = [...obEl.querySelectorAll(".ob-tile")], i = all.indexOf(document.activeElement);
+  if (i < 0) return;
+  e.preventDefault(); selectObRegion(all[(i + keys[e.key] + all.length) % all.length]);
+});
+function startOnboarding() {
+  ob.region = region || "";
+  obEl.hidden = false; document.body.style.overflow = "hidden";
+  showObStep(1);
+}
+async function finishOnboarding(skipped) {
+  try {
+    if (!skipped && ob.region !== (ME.region || "")) {
+      await api("/api/me/region", { method: "PUT", body: { region: ob.region } });
+      region = ob.region; ME.region = ob.region; $("#region").value = region; applyRegionChange(true);
+    }
+    await api("/api/me/onboarded", { method: "POST", body: { skipped } }); ME.onboarded = true;
+  } catch (e) { toast(e.message); }
+  obEl.hidden = true; document.body.style.overflow = "";
+  if (!skipped) showTab("overview", true);
+}
+$("#ob-next").addEventListener("click", () => showObStep(2));
+$("#ob-back").addEventListener("click", () => showObStep(1));
+$("#ob-go").addEventListener("click", () => finishOnboarding(false));
+$("#ob-skip").addEventListener("click", () => finishOnboarding(true));
+$("#ob-skip2").addEventListener("click", () => finishOnboarding(true));
+
 // ------------------------------------------------------------------ account
 $("#usermenu").addEventListener("click", () => {
   openModal(); $("#modal-back").hidden = true;
@@ -757,6 +811,8 @@ $("#usermenu").addEventListener("click", () => {
       <label class="field">Repeat new password<input id="pw-rep" class="search" type="password" minlength="10" required autocomplete="new-password"></label>
       <button class="btn" type="submit">Change password</button></form><p id="mypw-msg" class="hint"></p>`
     : '<p class="hint">The user database is not connected, so accounts and passwords are unavailable. Set DATABASE_URL.</p>';
+  $("#modal-body").insertAdjacentHTML("beforeend", '<p style="margin-top:14px"><button type="button" class="more" id="show-welcome">Show the welcome screen</button></p>');
+  $("#show-welcome").addEventListener("click", () => { closeModal(); startOnboarding(); });
   const f = $("#mypw");
   if (f) f.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -791,6 +847,7 @@ $("#arefresh").addEventListener("click", loadAlerts);
 // keyboard: "/" jumps to the search box of the current tab, Esc closes dialogs
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if (!drawer.hidden) closeDrawer(); else if (!modal.hidden) closeModal(); return; }
+  if (!obEl.hidden) return;
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
   const box = { victims: "#vq", news: "#nq", gangs: "#gq", alerts: "#aq", activity: "#act-q" }[activeTab()];
   if (box) { e.preventDefault(); $(box).focus(); }
@@ -870,6 +927,7 @@ async function init() {
   region = ME.region || "";
   if (h.region && ME.regions.includes(h.region)) region = h.region;        // a shared link filters the view without changing your saved region
   buildRegionSelect();
+  if (!ME.onboarded) startOnboarding();
   if (ME.role === "admin" && ME.database) document.querySelectorAll(".admin-only").forEach((el) => { el.hidden = false; });
   $("#usermenu").title = `Account: ${ME.username}`;
   // record this visit first so "new since your last visit" is measured against the previous one

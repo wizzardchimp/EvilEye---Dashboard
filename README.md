@@ -100,6 +100,13 @@ EVILEYE_PASSWORD=choose-one-long-password .venv/bin/python app.py     # legacy m
 ```
 Set `DATABASE_URL` to use real user accounts.
 
+## Welcome tour
+The first time a user signs in they see a welcome screen (three bullets: what EvilEye is) and then **Choose your local ROCU
+region** (each region lists the police forces it covers and how many victims are on record). Choosing a region saves it as
+their preference and applies it; Skip leaves it unchanged. It is shown once per user (`users.onboarded_at`) and can be
+reopened from the Account button. Finishing or skipping is written to the activity log. Without a database it is remembered
+for the session only.
+
 ## Look and feel
 The default theme is a slightly lightened dark. The contrast button in the header (and on the sign-in page) inverts it to a
 light theme; the choice is remembered per browser. All colours come from the tokens at the top of `static/style.css`.

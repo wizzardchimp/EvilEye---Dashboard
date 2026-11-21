@@ -651,10 +651,10 @@ def current_user():
     if LEGACY:
         if uid == "legacy" and session.get("ok"):
             g.user = {"id": 0, "username": "admin", "role": "admin", "region": session.get("region", ""), "legacy": True,
-                      "prev_visit": session.get("prev_visit")}
+                      "prev_visit": session.get("prev_visit"), "onboarded_at": session.get("onboarded")}
     elif isinstance(uid, int):
         try:
-            row = db.one("select id, username, role, region, active, password_hash, prev_visit from users where id=%s", (uid,))
+            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at from users where id=%s", (uid,))
             if row and row["active"] and session.get("pwv") == _pwv(row["password_hash"]):
                 g.user = row
         except Exception:
@@ -804,7 +804,30 @@ def api_me():
     u = current_user()
     p = _prev_visit()
     return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY,
-                   regions=geo.FILTER_REGIONS, prev_visit=p.isoformat() if p else None)
+                   regions=geo.FILTER_REGIONS, prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")))
+
+
+@app.post("/api/me/onboarded")
+def api_me_onboarded():
+    """The welcome tour has been finished (or skipped): do not show it again unless the user asks."""
+    u = current_user()
+    skipped = bool((request.get_json(silent=True) or {}).get("skipped"))
+    if LEGACY:
+        session["onboarded"] = datetime.now(timezone.utc).isoformat()
+    else:
+        db.run("update users set onboarded_at=now() where id=%s", (u["id"],))
+    log("onboarding_skipped" if skipped else "onboarding_done", u["region"] or "All UK")
+    return jsonify(ok=True)
+
+
+@app.get("/api/regions")
+def api_regions():
+    """The ROCU regions with the police forces each one covers and how many victims are on record (for the region picker)."""
+    by = Counter(v["rocu"] for v in STATE["victims"])
+    out = [{"name": r, "forces": [geo.FORCE_NAMES[f] for f in fs], "count": by.get(r, 0)} for r, fs in geo.ROCU_FORCES.items()]
+    out.append({"name": "Scotland", "forces": [geo.FORCE_NAMES["police-scotland"]], "count": by.get("Scotland", 0)})
+    out.append({"name": "Northern Ireland", "forces": [geo.FORCE_NAMES["northern-ireland"]], "count": by.get("Northern Ireland", 0)})
+    return jsonify(regions=out, total=sum(v["count"] for v in out))
 
 
 @app.put("/api/me/region")
