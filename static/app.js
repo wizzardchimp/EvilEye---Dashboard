@@ -611,35 +611,47 @@ $("#prefresh").addEventListener("click", loadPosts);
 $("#grefresh").addEventListener("click", loadGangs);
 $("#arefresh").addEventListener("click", loadAlerts);
 
-// ------------------------------------------------------------------ keep-screen-on toggle
+// ------------------------------------------------------------------ keep-screen-on: the shield in the header is the switch
+// Click the eye to keep the screen awake while this tab is visible; the eye turns green while it is on.
 (function () {
-  const btn = $("#awake");
+  const btn = $("#awake"), fav = $("#favicon");
   let lock = null;
   let want = false;
   try { want = localStorage.getItem("evileye-awake") === "1"; } catch (e) { /* storage unavailable */ }
   const store = (on) => { try { on ? localStorage.setItem("evileye-awake", "1") : localStorage.removeItem("evileye-awake"); } catch (e) { /* ignore */ } };
   function paint() {
-    btn.classList.toggle("on", want && !!lock);
-    btn.setAttribute("aria-pressed", want && lock ? "true" : "false");
-    btn.querySelector(".awake-label").textContent = want && lock ? "Screen kept on" : "Keep screen on";
+    const on = want && !!lock;
+    btn.setAttribute("aria-pressed", String(on));
+    btn.setAttribute("aria-label", on ? "Screen is kept on: click to turn off" : "Keep screen on");
+    btn.title = on ? "Screen is kept on (click the eye to turn off)" : "Keep screen on (click the eye)";
+    if (fav) fav.href = on ? "/static/favicon-on.png" : "/static/favicon.png";
   }
   async function acquire() {
-    if (!navigator.wakeLock) { btn.title = "This browser cannot keep the screen awake."; want = false; store(false); paint(); return; }
+    if (!navigator.wakeLock) { want = false; store(false); paint(); toast("This browser cannot keep the screen awake."); return false; }
     try {
       lock = await navigator.wakeLock.request("screen");
       lock.addEventListener("release", () => { lock = null; paint(); });
-    } catch (err) { lock = null; btn.title = err.message || "Wake lock was denied."; }
+    } catch (err) { lock = null; toast(err.message || "Screen wake was denied by the browser."); }
     paint();
+    return !!lock;
   }
   async function setAwake(on) {
     want = on; store(on);
     if (!on && lock) { await lock.release(); lock = null; }
-    if (on) await acquire(); else paint();
+    if (on) { if (await acquire()) toast("Screen will stay on while this tab is visible"); }
+    else { paint(); toast("Screen wake off"); }
   }
   btn.addEventListener("click", () => setAwake(!(want && lock)));
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && want) acquire(); });
   if (want) acquire(); else paint();
 })();
+
+// ------------------------------------------------------------------ home: the EvilEye text goes back to the Overview
+$("#home").addEventListener("click", (e) => {
+  e.preventDefault();
+  document.querySelector('.tab[data-tab="overview"]').click();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
 
 // ------------------------------------------------------------------ refresh policy
 // External feeds are fetched by the server only when the page is opened (if stale) or Refresh is pressed.

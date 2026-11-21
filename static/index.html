@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EvilEye</title>
-  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
   <link rel="stylesheet" href="/static/style.css">
@@ -13,11 +13,14 @@
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
-        <span class="logo"><img src="/static/logo.jpg" width="64" height="48" alt="EvilEye"></span>
-        <div>
+        <button id="awake" class="mark" type="button" aria-pressed="false" aria-label="Keep screen on" title="Keep screen on (click the eye)">
+          <img class="mark-off" src="/static/mark-off.png" width="58" height="60" alt="">
+          <img class="mark-on" src="/static/mark-on.png" width="58" height="60" alt="">
+        </button>
+        <a id="home" class="brand-text" href="/" title="Home">
           <h1 class="wordmark">Evil<span class="eye">Eye</span></h1>
           <p class="tagline">the private eye on the patch</p>
-        </div>
+        </a>
       </div>
       <div class="status-row">
         <label class="region-pick" title="Filters the dashboard to one regional organised crime unit (ROCU) area. Also sets your regional ticker.">
@@ -207,10 +210,6 @@
       <div id="modal-body"></div>
     </div>
   </div>
-  <button id="awake" class="awake" type="button" aria-pressed="false" title="Keeps the screen on while this tab is visible. Does not unlock the computer.">
-    <span class="awake-knob" aria-hidden="true"></span>
-    <span class="awake-label">Keep screen on</span>
-  </button>
-  <script src="/static/app.js?v=23"></script>
+  <script src="/static/app.js?v=24"></script>
 </body>
 </html>

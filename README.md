@@ -67,4 +67,7 @@ Set `DATABASE_URL` to use real user accounts.
 ## Look and feel
 The default theme is a slightly lightened dark. The contrast button in the header (and on the sign-in page) inverts it to a
 light theme; the choice is remembered per browser. All colours come from the tokens at the top of `static/style.css`.
-The logo is `static/logo.jpg` (shown on a dark tile so it works in both themes); the favicon is cropped from it.
+The header logo is split in two: the shield (`static/mark-off.png` red eye, `static/mark-on.png` green eye) and the
+"EvilEye" text. **Click the shield** to keep the screen awake while the tab is visible: the eye turns green (and so does
+the browser-tab icon) while it is on, and the choice is remembered per browser. **Click the EvilEye text** to return to the
+Overview. The sign-in page shows the same mark.
