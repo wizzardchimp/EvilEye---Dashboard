@@ -216,10 +216,22 @@ async function loadTrend() {
 function newsItemHTML(n, withSummary) {
   const themes = (n.themes || []).slice(0, 3).map((t) => `<span class="badge src">${esc(t)}</span>`).join(" ");
   const groups = (n.groups || []).map((g) => `<span class="badge grp">${esc(g)}</span>`).join(" ");
-  return `<div class="news-item"><a class="nt" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a>
+  // the thumbnail is fetched, checked and shrunk by the server: your browser never contacts the news site
+  const img = n.thumb ? `<a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true"><img class="thumb" loading="lazy" decoding="async" width="132" height="88" alt="" src="/api/news/thumb/${esc(n.id)}"></a>` : "";
+  return `<div class="news-item">${img}<div class="nbody"><a class="nt" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a>
     <div class="meta"><span class="badge uk">${esc(n.source_name)}</span> ${ago(n.published)} ${themes} ${groups}${n.uk ? ' <span class="badge wm">UK</span>' : ""}</div>
-    ${withSummary && n.summary ? `<div class="sum">${esc(n.summary.slice(0, 200))}${n.summary.length > 200 ? "…" : ""}</div>` : ""}</div>`;
+    ${withSummary && n.summary ? `<div class="sum">${esc(n.summary.slice(0, 200))}${n.summary.length > 200 ? "…" : ""}</div>` : ""}</div></div>`;
 }
+// thumbnails: on by default, switch off from either checkbox (remembered in this browser)
+function setThumbs(on) {
+  document.body.classList.toggle("no-thumbs", !on);
+  document.querySelectorAll(".thumbs-toggle").forEach((c) => { c.checked = on; });
+  try { localStorage.setItem("evileye-thumbs", on ? "1" : "0"); } catch (e) { /* storage unavailable */ }
+}
+document.querySelectorAll(".thumbs-toggle").forEach((c) => c.addEventListener("change", () => { setThumbs(c.checked); track("filter", `news thumbnails: ${c.checked ? "on" : "off"}`); }));
+try { setThumbs(localStorage.getItem("evileye-thumbs") !== "0"); } catch (e) { setThumbs(true); }
+// an image that fails to load (blocked, removed, not an image) just disappears rather than leaving a broken icon
+document.addEventListener("error", (e) => { if (e.target && e.target.classList && e.target.classList.contains("thumb")) e.target.closest("a").remove(); }, true);
 async function loadNewsTop() {
   const el = $("#news-top");
   if (!el.children.length) el.innerHTML = sk(3);

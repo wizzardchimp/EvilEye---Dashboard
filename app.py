@@ -9,11 +9,14 @@ password (EVILEYE_PASSWORD) and user management is unavailable.
 import csv
 import hashlib
 import hmac
+import html as htmllib
 import io
+import ipaddress
 import json
 import os
 import re
 import secrets
+import socket
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -22,9 +25,11 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from functools import wraps
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 import requests
-from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory, session
+from flask import Flask, Response, g, jsonify, redirect, request, send_file, send_from_directory, session
+from PIL import Image
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import db
@@ -34,6 +39,12 @@ BASE = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SNAPSHOT = DATA_DIR / "snapshot.json"
+THUMB_DIR = DATA_DIR / "thumbs"
+THUMB_DIR.mkdir(parents=True, exist_ok=True)
+OG_FILE = DATA_DIR / "ogcache.json"            # article URL -> its og:image ("" = looked, none found)
+OG_BUDGET = 20                                 # article pages fetched per refresh to find a missing thumbnail
+THUMB_DNS_CHECK = os.environ.get("THUMB_DNS_CHECK", "1") != "0"      # only ever switched off for sandbox testing
+Image.MAX_IMAGE_PIXELS = 30_000_000            # refuse decompression bombs
 SCHEMA_VERSION = 5
 SNAP_KEYS = ("victims", "gangs", "intel", "news", "last_refresh", "errors")
 
@@ -132,20 +143,31 @@ def _apply_geo(victims):
 
 
 # ----------------------------------------------------------------- ingest
+def _plain(text, limit=300):
+    """Tags removed, HTML entities decoded (some feeds double-encode them) and whitespace collapsed."""
+    t = text or ""
+    for _ in range(3):
+        u = htmllib.unescape(t)
+        if u == t:
+            break
+        t = u
+    t = re.sub(r"&?#?;?x[0-9a-f]{2,4};|&#;x?[0-9a-f]*;?", "", t)       # malformed entities some feeds ship ("&#;x26;")
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t)).strip()[:limit]
+
+
 def _rss(url, source, kind, limit=25, skip=None):
     root = ET.fromstring(_get(url, False))
     out = []
     for it in root.iter("item"):
-        title = (it.findtext("title") or "").strip()
+        title = _plain(it.findtext("title"), 300)
         if skip and skip(title):
             continue
         try:
             pub = parsedate_to_datetime(it.findtext("pubDate")).astimezone(timezone.utc).isoformat()
         except Exception:
             pub = None
-        summary = re.sub(r"<[^>]+>", " ", it.findtext("description") or "")
         out.append({"title": title, "source": source, "kind": kind, "url": (it.findtext("link") or "").strip(),
-                    "summary": re.sub(r"\s+", " ", summary).strip()[:300], "published": pub, "extra": {}})
+                    "summary": _plain(it.findtext("description")), "published": pub, "extra": {}})
         if len(out) >= limit:
             break
     return out
@@ -184,11 +206,103 @@ COMMON_WORDS = {"play", "cactus", "medusa", "hunters", "royal", "rhysida", "ever
 NOT_GROUPS = {"unknown", "underground", "test", "none", "other", "leaked data", "leakeddata", "data leak", "dataleak", "cyberfeeddigest"}
 
 
+# ---- thumbnails: the server fetches, checks, shrinks and caches each image; browsers never contact the news sites
+def _public_url(url):
+    """True only for http(s) URLs whose host is a public address (no localhost, private, link-local or metadata IPs)."""
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    if p.scheme not in ("http", "https") or not host or host == "localhost" or host.endswith((".local", ".internal", ".localhost")):
+        return False
+    try:
+        return ipaddress.ip_address(host).is_global           # an IP literal must itself be public
+    except ValueError:
+        pass
+    if not THUMB_DNS_CHECK:
+        return True
+    try:
+        infos = socket.getaddrinfo(host, p.port or (443 if p.scheme == "https" else 80), proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    return bool(infos) and all(ipaddress.ip_address(i[4][0]).is_global for i in infos)
+
+
+def _safe_get(url, max_bytes, accept, truncate=False, timeout=8):
+    """GET with SSRF protection: public hosts only, re-checked on every redirect (max 4), size capped, no cookies.
+    Returns (content_type, bytes) or None."""
+    for _ in range(5):
+        if not _public_url(url):
+            return None
+        try:
+            r = requests.get(url, headers={**UA, "Accept": accept}, timeout=timeout, stream=True, allow_redirects=False)
+        except requests.RequestException:
+            return None
+        if r.status_code in (301, 302, 303, 307, 308):
+            url = urljoin(url, r.headers.get("Location", ""))
+            r.close()
+            continue
+        if not r.ok:
+            r.close()
+            return None
+        ctype = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        buf = bytearray()
+        try:
+            for chunk in r.iter_content(32768):
+                buf += chunk
+                if len(buf) > max_bytes:
+                    if truncate:
+                        break
+                    return None
+        except requests.RequestException:
+            return None
+        finally:
+            r.close()
+        return ctype, bytes(buf)
+    return None
+
+
+MEDIA = "{http://search.yahoo.com/mrss/}"
+CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
+
+
+def _feed_image(it):
+    """The post's own image from the feed entry (media:content / media:thumbnail / enclosure / first <img>), or ''."""
+    for tag in ("content", "thumbnail"):
+        for el in it.findall(MEDIA + tag):
+            u, medium, typ = el.get("url"), el.get("medium") or "", el.get("type") or ""
+            if u and (tag == "thumbnail" or (medium in ("", "image") and (not typ or typ.startswith("image")))):
+                return u
+    for el in it.findall("enclosure"):
+        if (el.get("type") or "").startswith("image") and el.get("url"):
+            return el.get("url")
+    html = (it.findtext(CONTENT_NS + "encoded") or "") + (it.findtext("description") or "")
+    m = re.search(r'<img[^>]+src=["\']([^"\']+)', html)
+    return m.group(1) if m and not re.search(r"1x1|pixel|spacer|tracking|\.gif", m.group(1), re.I) else ""
+
+
+def _og_image(article_url):
+    """Fallback for feeds without images: the article page's og:image / twitter:image."""
+    got = _safe_get(article_url, 400_000, "text/html", truncate=True)
+    if not got or "html" not in got[0]:
+        return ""
+    page = got[1].decode("utf-8", errors="ignore")
+    for pat in (r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]+content=["\']([^"\']+)',
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\']'):
+        m = re.search(pat, page, re.I)
+        if m:
+            u = urljoin(article_url, m.group(1).replace("&amp;", "&"))
+            return u if urlparse(u).scheme in ("http", "https") else ""
+    return ""
+
+
+def _news_id(url):
+    return hashlib.sha1(url.encode()).hexdigest()[:16]
+
+
 def _news_feed(fid, url, name, weight):
     root = ET.fromstring(_get(url, False))
     out = []
     for it in root.iter("item"):
-        title = re.sub(r"\s+", " ", (it.findtext("title") or "")).strip()
+        title = _plain(it.findtext("title"), 300)
         link = (it.findtext("link") or "").strip()
         if not title or not link:
             continue
@@ -198,10 +312,10 @@ def _news_feed(fid, url, name, weight):
         except Exception:
             pub = None
         desc = it.findtext("description") or ""
-        summary = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", desc)).strip()[:320]
+        summary = _plain(desc, 320)
         cats = [c.text.strip() for c in it.findall("category") if c.text][:5]
         out.append({"title": title, "url": link, "source": fid, "source_name": name, "weight": weight,
-                    "published": pub, "summary": summary, "cats": cats})
+                    "published": pub, "summary": summary, "cats": cats, "thumb": _feed_image(it)})
     return out
 
 
@@ -257,6 +371,27 @@ def _build_news(gangs):
         except Exception as e:
             errs["news_" + fid] = str(e)
     out = sorted(items.values(), key=lambda n: n["published"] or "", reverse=True)[:300]
+    # thumbnails: the feed's own image, else the article's og:image (a few pages per refresh, remembered on disk)
+    try:
+        og = json.loads(OG_FILE.read_text())
+    except Exception:
+        og = {}
+    budget = OG_BUDGET
+    for n in out:
+        n["id"] = _news_id(n["url"])
+        if not n.get("thumb") and n["url"] in og:
+            n["thumb"] = og[n["url"]]
+        elif not n.get("thumb") and budget > 0:
+            budget -= 1
+            og[n["url"]] = n["thumb"] = _og_image(n["url"])
+    try:
+        OG_FILE.write_text(json.dumps(dict(list(og.items())[-600:])))
+        keep = {n["id"] for n in out}
+        for f in THUMB_DIR.glob("*"):                          # drop cached thumbnails of items that have aged out
+            if f.stem not in keep:
+                f.unlink(missing_ok=True)
+    except Exception as e:
+        errs["thumbs"] = str(e)
     return out, errs, stamps
 
 
@@ -1110,7 +1245,9 @@ def api_intel():
 
 # ---- dark web news
 def _news_public(n):
-    return {k: n.get(k) for k in ("title", "url", "source", "source_name", "published", "summary", "cats", "themes", "groups", "uk")}
+    d = {k: n.get(k) for k in ("id", "title", "url", "source", "source_name", "published", "summary", "cats", "themes", "groups", "uk")}
+    d["thumb"] = bool(n.get("thumb"))
+    return d
 
 
 @app.get("/api/news")
@@ -1136,6 +1273,44 @@ def api_news():
     return jsonify(total=len(items), items=[_news_public(n) for n in items[off:off + lim]],
                    sources=[{"id": i, "name": nm, "count": c} for (i, nm), c in sources.most_common()],
                    themes=[t for t, _ in THEMES])
+
+
+@app.get("/api/news/thumb/<nid>")
+def api_news_thumb(nid):
+    """A small cached JPEG of the post's image. Only images attached to known news items are fetched (never a URL from the
+    browser), only from public hosts, only real raster images, at most 3 MB before shrinking."""
+    if not re.fullmatch(r"[0-9a-f]{16}", nid):
+        return "", 404
+    item = next((n for n in STATE["news"] if n.get("id") == nid), None)
+    if not item or not item.get("thumb"):
+        return "", 404
+    f, miss = THUMB_DIR / f"{nid}.jpg", THUMB_DIR / f"{nid}.none"
+    if not f.exists():
+        if miss.exists() and time.time() - miss.stat().st_mtime < 3600:
+            return "", 404
+        got = _safe_get(item["thumb"], 3_000_000, "image/*")
+        try:
+            if not got or not got[0].startswith("image/"):
+                raise ValueError("not an image")
+            img = Image.open(io.BytesIO(got[1]))
+            if img.format not in ("JPEG", "PNG", "WEBP", "GIF"):
+                raise ValueError("unsupported format")
+            img.load()
+            img.thumbnail((360, 240))
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGBA")
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[-1])
+                img = bg
+            tmp = f.with_suffix(".tmp")
+            img.convert("RGB").save(tmp, "JPEG", quality=78, optimize=True)
+            tmp.replace(f)
+        except Exception:
+            miss.write_bytes(b"")
+            return "", 404
+    resp = send_file(f, mimetype="image/jpeg", max_age=86400)
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
 
 
 @app.get("/api/news/top")

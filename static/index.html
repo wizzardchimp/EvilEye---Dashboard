@@ -7,15 +7,15 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=30">
+  <link rel="stylesheet" href="/static/style.css?v=31">
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
         <button id="awake" class="mark" type="button" aria-pressed="false" aria-label="Keep screen on">
-          <img class="mark-off" src="/static/mark-off.png" width="52" height="54" alt="">
-          <img class="mark-on" src="/static/mark-on.png" width="52" height="54" alt="">
+          <img class="mark-off" src="/static/mark-off.png" width="48" height="54" alt="">
+          <img class="mark-on" src="/static/mark-on.png" width="48" height="54" alt="">
         </button>
         <a id="home" class="brand-text" href="/">
           <h1 class="wordmark">Evil<span class="eye">Eye</span></h1>
@@ -71,7 +71,7 @@
         </div>
       </div>
       <div class="card news-top">
-        <div class="card-head"><h3>Dark web news &middot; top 3</h3><button id="news-all" class="more" type="button">All dark web news</button></div>
+        <div class="card-head"><h3>Dark web news &middot; top 3</h3><span class="head-actions"><label class="chk"><input type="checkbox" class="thumbs-toggle" checked> Thumbnails</label><button id="news-all" class="more" type="button">All dark web news</button></span></div>
         <div id="news-top" class="news-top-list"></div>
       </div>
       <div id="stat-cards" class="stat-grid"></div>
@@ -156,6 +156,7 @@
           <label><input type="radio" name="nuk" value="" checked> All</label>
           <label><input type="radio" name="nuk" value="1"> Mentions UK</label>
         </div>
+        <label class="chk" title="Small previews of each post's own image. Dark Web Informer's are screenshots of forum posts."><input type="checkbox" class="thumbs-toggle" checked> Thumbnails</label>
         <button id="nrefresh" class="btn">Refresh</button>
       </div>
       <p id="ncount" class="count"></p>
@@ -276,6 +277,6 @@
     </div>
     <div id="dr-body" class="drawer-body"></div>
   </aside>
-  <script src="/static/app.js?v=30"></script>
+  <script src="/static/app.js?v=31"></script>
 </body>
 </html>

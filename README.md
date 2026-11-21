@@ -19,6 +19,16 @@ and UK mentions. The welcome page shows the top three (score minus a small recen
 **Dark Web News** tab has a rule-based briefing built from headlines, categories and group names (it does not read the
 articles). The week-on-week change only compares sources whose feed reaches back across both windows.
 
+### Thumbnails
+Each news item shows a small preview of the post's own image: from the feed entry (media / enclosure / first image) or, when the
+feed has none, the article page's `og:image` (up to 20 pages per refresh, remembered in `DATA_DIR/ogcache.json`). Browsers never
+contact the news sites: `/api/news/thumb/<id>` fetches the image on the server, refuses anything that is not a public http(s) host
+(checked again on every redirect; no localhost, private, link-local or metadata addresses), accepts only real JPEG/PNG/WEBP/GIF
+under 3 MB (never SVG), shrinks it to at most 360x240 JPEG and caches it in `DATA_DIR/thumbs` (pruned as items age out). Dark Web
+Informer's images are screenshots of forum posts, so there is a **Thumbnails** switch (welcome page and news tab) that hides them
+everywhere and is remembered per browser. Some sites (e.g. DataBreaches.net) refuse automated page fetches, so their items have no
+thumbnail.
+
 ## UK victims
 The list is de-duplicated (the same company claimed again by the same group is one victim). Sector is ransomware.live's own
 classification; victims it has not classified are reported separately as Unclassified, not ranked. Each row shows the
