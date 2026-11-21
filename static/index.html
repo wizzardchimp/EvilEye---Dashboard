@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=43">
+  <link rel="stylesheet" href="/static/style.css?v=44">
 </head>
 <body>
   <header class="topbar">
@@ -105,6 +105,7 @@
         <input id="vq" class="search" type="search" placeholder="Search victim, town, website, group&hellip; (press /)">
         <select id="vgroup" class="search"><option value="">All groups</option></select>
         <select id="vsector" class="search"><option value="">All sectors</option></select>
+        <select id="vmark" class="search" aria-label="Show" hidden><option value="">All victims</option><option value="alloc">Allocated</option><option value="mine">Allocated to me</option><option value="flagged">False positives</option></select>
         <label class="chk" id="vnew-wrap" hidden><input type="checkbox" id="vnew"> <span id="vnew-label">New since your last visit</span></label>
         <button id="vrefresh" class="btn">Refresh</button>
         <a id="vcsv" class="more" href="/api/victims.csv" title="Download the current list as CSV">Export CSV</a>
@@ -118,6 +119,7 @@
             <th class="sortable" data-sort="sector">Sector <span class="arrow"></span></th>
             <th class="sortable" data-sort="seen">First seen <span class="arrow"></span></th>
             <th class="sortable" data-sort="region">Region <span class="arrow"></span></th>
+            <th class="r" aria-label="Flag or allocate"></th>
           </tr></thead>
           <tbody id="victim-rows"></tbody>
         </table>
@@ -281,6 +283,16 @@
     </div>
   </div>
 
+  <div id="fdlg" class="modal fdlg" hidden>
+    <div class="modal-card fd-card" role="dialog" aria-modal="true" aria-labelledby="fd-title">
+      <div class="card-head">
+        <h3 id="fd-title">Flag or allocate</h3>
+        <div class="modal-actions"><button id="fd-close" class="more" type="button">Close</button></div>
+      </div>
+      <p id="fd-sub" class="fd-sub"></p>
+      <div id="fd-body"></div>
+    </div>
+  </div>
   <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
   <aside id="drawer" class="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="dr-title">
     <div class="drawer-head">
@@ -331,6 +343,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=44"></script>
+  <script src="/static/app.js?v=46"></script>
 </body>
 </html>

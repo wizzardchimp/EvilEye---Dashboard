@@ -84,6 +84,25 @@ name links to its own website when the source data gives a usable web address (o
 address), and those clicks are recorded in the activity log as "latest incidents". `/api/ticker?uk=N&reg=N` returns up to
 1,500 per list.
 
+## Flags and allocation
+Every victim (in the Overview tickers, the UK Victims table and the details drawer) has a flag button. Any signed-in user can:
+
+- **Flag a false positive**, as either **Not in <its region>** (a UK victim that is not in that region) or **Not in the UK**,
+  with an optional note. The victim leaves that region (or the UK) for everyone straight away: it shows as "region unknown"
+  or "Overseas / not UK" with a *false positive* badge, and the region tiles and tickers update. The automatic placement is
+  kept underneath, so **Undo flag** (also offered as an Undo link right after flagging) restores it exactly. Only the person
+  who flagged it, or an admin, can undo a flag. An admin's manual placement always wins: a manually placed victim cannot be
+  flagged, and an existing flag stops applying while a manual placement exists.
+- **Allocate** the victim by putting 2 to 4 letters of initials on it, to show they are working on it. The initials appear as
+  a badge (with who set it and when in its tooltip). Initials can be remembered per user, anyone can take over, and the
+  allocator, the person with those initials, or an admin can release it.
+
+The UK Victims **Show** filter lists *Allocated*, *Allocated to me* and *False positives* (the last also finds victims flagged
+out of the selected region, so they can be reviewed or undone). Flags and allocations are stored in PostgreSQL (tables
+`victim_flags` and `victim_alloc`, plus `users.initials`), survive refreshes and restarts, appear in the CSV export
+(`false_positive_flag`, `allocated_to`) and in the activity log (*Flagged a false positive*, *Undid a false-positive flag*,
+*Allocated a victim*, *Released a victim allocation*). Without a database the buttons are hidden.
+
 ## Users and activity (PostgreSQL)
 Accounts live in PostgreSQL (`DATABASE_URL`). The first admin is created from `EVILEYE_ADMIN_USER` (default `admin`) and
 `EVILEYE_PASSWORD` when the users table is empty. After that, admins add, disable, delete and reset users on the

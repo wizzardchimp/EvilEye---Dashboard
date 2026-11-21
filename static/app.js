@@ -123,6 +123,21 @@ const placed = (v) => v.rocu && v.rocu !== "Unplaced" && v.rocu !== "Overseas / 
 const townLabel = (v) => (v.town && placed(v) ? ` <span class="town">(${esc(v.town)})</span>` : "");
 const newBadge = (v) => (v.new ? ' <span class="badge new">NEW</span>' : "");
 
+// ------------------------------------------------------------------ flags (false positives) and allocations ("I am working on this")
+const ICON_FLAG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h13l-2.5 4.5L18 13H5"/></svg>';
+const ICON_PERSON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6.5 8-6.5s8 2.5 8 6.5"/></svg>';
+const flagWhat = (f) => (f.kind === "not_uk" ? "not in the UK" : `not in ${f.region}`);
+const flagText = (f) => `Flagged as a false positive by ${f.by} (${flagWhat(f)})${f.note ? `: "${f.note}"` : ""}, ${fmtTime(f.at)}`;
+const allocText = (a) => `Allocated to ${a.initials}, set by ${a.by}, ${fmtTime(a.at)}`;
+const marks = (v) => [
+  v.flag && v.flag.applied ? `<span class="badge fp" title="${esc(flagText(v.flag))}">false positive</span>` : "",
+  v.alloc ? `<span class="badge alloc" title="${esc(allocText(v.alloc))}">${ICON_PERSON}${esc(v.alloc.initials)}</span>` : "",
+].filter(Boolean).join(" ");
+const flagBtn = (ref, v) => (ME && ME.database
+  ? `<button type="button" class="flagbtn${v.alloc || (v.flag && v.flag.applied) ? " on" : ""}" data-flag="${ref}" aria-label="Flag or allocate ${esc(v.post_title || v.title)}" title="Flag or allocate">${ICON_FLAG}</button>` : "");
+let tkItems = { uk: [], reg: [] }, drawerVictim = null;            // what each flag button refers to
+const refVictim = (ref) => { const [src, a, b] = ref.split(":"); return src === "tk" ? tkItems[a][+b] : src === "vt" ? lastVictims[+a] : drawerVictim; };
+
 // ------------------------------------------------------------------ ticker (reads the server's cache; no external calls)
 let tickerSeen = new Set();
 const TK_FIRST = 5, TK_STEP = 25;
@@ -133,13 +148,14 @@ function siteHref(site) {
   const s = (site || "").trim().replace(/^https?:\/\//i, "");
   return isDomain(s) ? `https://${s}` : "";
 }
-function tickerItem(x, showRegion, fresh) {
+function tickerItem(x, showRegion, fresh, list, i) {
   const meta = [`<span class="badge grp">${esc(x.group)}</span>`, esc(sectorShort(x.sector)), ago(x.seen)].filter(Boolean).join(" · ");
   const reg = showRegion ? `<span class="badge ${x.rocu === "Unplaced" ? "src" : "uk"}">${esc(x.rocu === "Unplaced" ? "region unknown" : x.rocu)}</span>` : "";
   const href = siteHref(x.website);
   const name = href ? `<a class="tk-name" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(href.slice(8))} (opens in a new tab)">${esc(x.title)}</a>` : esc(x.title);
   const area = x.town && placed(x) ? `<span class="tk-area">${esc(x.town)}</span>` : "";
-  return `<li class="${fresh ? "fresh" : ""}"><div class="tk-main"><div class="tk-title">${name} ${reg}${x.new ? ' <span class="badge new">NEW</span>' : ""}</div><div class="meta">${meta}</div></div>${area}</li>`;
+  const mk = marks(x), fb = flagBtn(`tk:${list}:${i}`, x);
+  return `<li class="${fresh ? "fresh" : ""}"><div class="tk-main"><div class="tk-title">${name} ${reg}${x.new ? ' <span class="badge new">NEW</span>' : ""}${mk ? " " + mk : ""}</div><div class="meta">${meta}</div></div>${area || fb ? `<div class="tk-side">${area}${fb}</div>` : ""}</li>`;
 }
 function tickerFoot(which) {
   const s = TK[which], foot = $("#tkf-" + which), shown = Math.min(s.n, s.total), expanded = s.n > TK_FIRST;
@@ -157,12 +173,12 @@ async function loadTicker(expanding = false) {
     const d = await api(`/api/ticker?uk=${TK.uk.n}&reg=${TK.reg.n}`);
     // flash only genuinely new entries among the first few, not rows revealed by "View more"
     const fresh = (x, i) => !expanding && i < TK_FIRST && tickerSeen.size && !tickerSeen.has(x.title);
-    TK.uk.total = d.uk_total; TK.reg.total = d.regional_total;
-    setList("#tk-uk", d.uk.length ? d.uk.map((x, i) => tickerItem(x, true, fresh(x, i))).join("") : '<li class="ldr">no data yet — still syncing</li>');
+    TK.uk.total = d.uk_total; TK.reg.total = d.regional_total; tkItems = { uk: d.uk, reg: d.regional };
+    setList("#tk-uk", d.uk.length ? d.uk.map((x, i) => tickerItem(x, true, fresh(x, i), "uk", i)).join("") : '<li class="ldr">no data yet — still syncing</li>');
     $("#tk-region").textContent = d.region || "your region";
     setList("#tk-reg", !d.region
       ? '<li class="ldr">Choose a region in the header to see its latest incidents here.</li>'
-      : d.regional.length ? d.regional.map((x, i) => tickerItem(x, false, fresh(x, i))).join("") : `<li class="ldr">No placed incidents in ${esc(d.region)} yet.</li>`);
+      : d.regional.length ? d.regional.map((x, i) => tickerItem(x, false, fresh(x, i), "reg", i)).join("") : `<li class="ldr">No placed incidents in ${esc(d.region)} yet.</li>`);
     tickerSeen = new Set([...d.uk, ...d.regional].map((x) => x.title));
     tickerFoot("uk"); tickerFoot("reg");
     $("#tk-updated").textContent = d.updated ? `data ${ago(d.updated)}` : "";
@@ -221,6 +237,7 @@ async function loadOverview() {
     const p = d.placement, lk = p.lookup || {};
     let note = `<strong>${p.placed}</strong> of ${p.total} victims placed to a UK region (${p.from_text} from place names, ${p.from_postcode} postcodes, ${p.from_companies_house} Companies House, ${p.from_manual} set manually). ` +
       `${p.overseas} look overseas / not UK, ${p.unplaced} still unplaced.`;
+    if (p.flagged) note += ` ${p.flagged} flagged as false positive${p.flagged === 1 ? "" : "s"} by users.`;
     if (!p.api_enabled) note += " Companies House lookup is off: set COMPANIES_HOUSE_KEY.";
     else if (!lk.auth_error) {
       const bits = [];
@@ -333,13 +350,14 @@ modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); }
 
 // ------------------------------------------------------------------ victims: sort, page, search, export
 const PAGE = 50;
-const vm = { q: "", group: "", sector: "", sort: "seen", dir: "desc", page: 0, newOnly: false };
+const vm = { q: "", group: "", sector: "", mark: "", sort: "seen", dir: "desc", page: 0, newOnly: false };
 let lastVictims = [], facetsFilled = false;
 function victimParams(extra = {}) {
   const p = rq({ sort: vm.sort, dir: vm.dir, ...extra });
   if (vm.q) p.set("q", vm.q);
   if (vm.group) p.set("group", vm.group);
   if (vm.sector) p.set("sector", vm.sector);
+  if (vm.mark) p.set("mark", vm.mark);
   if (vm.newOnly) p.set("new", "1");
   return p;
 }
@@ -348,7 +366,7 @@ const regionCell = (v) => v.rocu === "Unplaced" ? '<span class="badge src">regio
   : `<span class="badge uk">${esc(v.rocu)}</span><div class="meta">${esc(v.force_name)}${v.region_source === "manual" ? " · set manually" : ""}</div>`;
 async function loadVictims() {
   const tbody = $("#victim-rows");
-  if (!tbody.children.length || tbody.querySelector(".ldr")) tbody.innerHTML = `<tr><td colspan="5">${sk(6)}</td></tr>`;
+  if (!tbody.children.length || tbody.querySelector(".ldr")) tbody.innerHTML = `<tr><td colspan="6">${sk(6)}</td></tr>`;
   try {
     const d = await api(`/api/victims?${victimParams({ limit: String(PAGE), offset: String(vm.page * PAGE) })}`);
     lastVictims = d.items;
@@ -362,23 +380,25 @@ async function loadVictims() {
       th.querySelector(".arrow").textContent = on ? (vm.dir === "asc" ? "▲" : "▼") : "";
     });
     const pages = Math.max(1, Math.ceil(d.total / PAGE));
-    $("#vcount").textContent = `${d.total} UK victims${region ? ` in ${region}` : ""}`;
+    $("#vmark").hidden = !ME.database;
+    $("#vcount").textContent = `${d.total} ${vm.mark === "flagged" ? "false positives" : vm.mark ? "allocated victims" : "UK victims"}${region ? ` in ${region}` : ""}`;
     tbody.innerHTML = d.items.length ? d.items.map((v, i) => `
         <tr class="clickable" data-i="${i}" tabindex="0">
-          <td><strong>${esc(v.post_title)}</strong>${townLabel(v)}${newBadge(v)}
+          <td><strong>${esc(v.post_title)}</strong>${townLabel(v)}${newBadge(v)}${marks(v) ? " " + marks(v) : ""}
             ${isDomain(v.website) ? `<div class="meta">${esc(v.website)}</div>` : ""}</td>
           <td><span class="badge grp">${esc(v.group)}</span></td>
           <td>${esc(v.activity || "—")}</td>
           <td>${fmtDate(v.seen || v.discovered)}</td>
           <td>${regionCell(v)}</td>
-        </tr>`).join("") : '<tr><td colspan="5" class="ldr">no matches</td></tr>';
+          <td class="r">${flagBtn("vt:" + i, v)}</td>
+        </tr>`).join("") : '<tr><td colspan="6" class="ldr">no matches</td></tr>';
     $("#vpager").innerHTML = d.total ? `<span>Showing ${vm.page * PAGE + 1}–${vm.page * PAGE + d.items.length} of ${d.total}</span>
       <span class="btns"><button class="more" type="button" id="vprev" ${vm.page === 0 ? "disabled" : ""}>Previous</button>
       <span style="align-self:center">Page ${vm.page + 1} of ${pages}</span>
       <button class="more" type="button" id="vnext" ${vm.page + 1 >= pages ? "disabled" : ""}>Next</button></span>` : "";
     const go = (n) => () => { vm.page += n; loadVictims(); window.scrollTo({ top: $("#tab-victims").offsetTop - 60, behavior: "smooth" }); };
     $("#vprev")?.addEventListener("click", go(-1)); $("#vnext")?.addEventListener("click", go(1));
-  } catch (e) { tbody.innerHTML = `<tr><td colspan="5" class="ldr">failed to load: ${esc(e.message)}</td></tr>`; }
+  } catch (e) { tbody.innerHTML = `<tr><td colspan="6" class="ldr">failed to load: ${esc(e.message)}</td></tr>`; }
 }
 function fillFacets(f) {
   if (facetsFilled || !f) return;
@@ -393,27 +413,30 @@ document.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("cl
   vm.sort = k; vm.page = 0; loadVictims(); track("filter", `victims sort: ${k} ${vm.dir}`);
 }));
 const openRow = (tr) => { if (tr && lastVictims[+tr.dataset.i]) openVictim(lastVictims[+tr.dataset.i]); };
-$("#victim-rows").addEventListener("click", (e) => { if (!e.target.closest("a")) openRow(e.target.closest("tr.clickable")); });
-$("#victim-rows").addEventListener("keydown", (e) => { if (e.key === "Enter") openRow(e.target.closest("tr.clickable")); });
+$("#victim-rows").addEventListener("click", (e) => { if (!e.target.closest("a, button")) openRow(e.target.closest("tr.clickable")); });
+$("#victim-rows").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.target.closest("button")) openRow(e.target.closest("tr.clickable")); });
 
 // ------------------------------------------------------------------ victim details drawer
 const drawer = $("#drawer"), backdrop = $("#drawer-backdrop");
 function closeDrawer() { drawer.hidden = true; backdrop.hidden = true; }
 const BASIS = { text: "a place name in its description", postcode: "a postcode in its description", "companies-house": "its Companies House registered office",
   manual: "set manually by an admin" };
-function openVictim(v) {
-  track("victim_view", v.post_title);
+function openVictim(v, quiet = false) {
+  if (!quiet) track("victim_view", v.post_title);
+  drawerVictim = v;
   $("#dr-title").innerHTML = `${esc(v.post_title)}${townLabel(v)}`;
-  const basis = v.region_source === "text-overseas" ? "Marked overseas because its description says it is based abroad."
+  const basis = v.region_source === "flag" ? v.why
+    : v.region_source === "text-overseas" ? "Marked overseas because its description says it is based abroad."
     : v.region_source ? `Placed using ${BASIS[v.region_source] || v.region_source}.`
     : (v.why || "Not placed yet: no postcode, place name or Companies House match.");
   const canEdit = ME.role === "admin" && ME.database;
   $("#dr-body").innerHTML = `
     <div>${newBadge(v).trim()} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
+    ${ME.database ? `<div class="dr-actions">${marks(v)}<button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate</button></div>` : ""}
     <dl class="dl">
       <dt>First seen</dt><dd>${fmtTime(v.seen || v.discovered)}</dd>
       <dt>Region</dt><dd>${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) ? ` · ${esc(v.town)}` : ""}</dd>
-      <dt>Basis</dt><dd>${esc(basis)}${v.region_source && v.why ? ` ${esc(v.why)}` : ""}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}</dd>
+      <dt>Basis</dt><dd>${esc(basis)}${v.region_source && v.region_source !== "flag" && v.why ? ` ${esc(v.why)}` : ""}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}</dd>
       ${v.registered_name ? `<dt>Registered as</dt><dd>${esc(v.registered_name)}</dd>` : ""}
       ${isDomain(v.website) ? `<dt>Website</dt><dd><a href="https://${esc(v.website)}" target="_blank" rel="noopener noreferrer">${esc(v.website)}</a></dd>` : ""}
       ${v.reposts ? `<dt>Re-posted</dt><dd>${v.reposts} more time${v.reposts === 1 ? "" : "s"} by the same group</dd>` : ""}
@@ -598,12 +621,93 @@ function logLink(e) {
 document.addEventListener("click", logLink, true);
 document.addEventListener("auxclick", logLink, true);       // middle-click opens a new tab too
 
+// ------------------------------------------------------------------ the flag / allocate dialog
+const fdlg = $("#fdlg");
+let fdVictim = null;
+const closeFlag = () => { fdlg.hidden = true; fdVictim = null; };
+const suggestInitials = (name) => { const p = (name || "").split(/[^A-Za-z]+/).filter(Boolean); return (p.length > 1 ? p.slice(0, 3).map((x) => x[0]).join("") : (p[0] || "").slice(0, 2)).toUpperCase(); };
+async function fetchVictim(title) {                          // not region-filtered: a flagged victim may have left the region
+  const d = await api(`/api/victims?${new URLSearchParams({ q: title, limit: "50" })}`);
+  return d.items.find((x) => x.post_title === title) || null;
+}
+async function afterMark(title) {
+  loadTicker(); refreshCurrent();
+  if (!drawer.hidden && drawerVictim && drawerVictim.post_title === title) {
+    try { const nv = await fetchVictim(title); if (nv) openVictim(nv, true); } catch (e) { /* leave the drawer as it is */ }
+  }
+}
+async function undoFlag(title, quiet) {
+  await api(`/api/victims/flag?title=${encodeURIComponent(title)}`, { method: "DELETE" });
+  if (!quiet) toast("Flag removed"); afterMark(title);
+}
+function openFlag(v) {
+  if (!v) return;
+  fdVictim = v;
+  const title = v.post_title || v.title, f = v.flag, a = v.alloc, isAdmin = ME.role === "admin";
+  const region = v.rocu === "Unplaced" ? "region unknown" : v.rocu === "Overseas / not UK" ? "overseas / not UK" : v.rocu;
+  $("#fd-sub").innerHTML = `<strong>${esc(title)}</strong> · ${esc(region)}`;
+  const canUndo = f && (isAdmin || ME.username === f.by);
+  const canRelease = a && (isAdmin || ME.username === a.by || (ME.initials || "") === a.initials);
+  const status = [
+    f ? `<div class="fd-status fp"><div class="fd-st-text"><strong>Flagged as a false positive</strong> by ${esc(f.by)}: ${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""}. <span class="meta">${esc(fmtTime(f.at))}</span>${f.applied ? "" : `<br><span class="meta">Not in effect right now: ${v.manual ? "an admin set this region by hand" : "the automatic region has changed since"}.</span>`}${canUndo ? "" : `<br><span class="meta">Only the person who flagged it (${esc(f.by)}) or an admin can undo this.</span>`}</div>${canUndo ? '<button type="button" class="more" id="fd-unflag">Undo flag</button>' : ""}</div>` : "",
+    a ? `<div class="fd-status al"><div class="fd-st-text"><strong>Allocated to ${esc(a.initials)}</strong>, set by ${esc(a.by)}. <span class="meta">${esc(fmtTime(a.at))}</span>${canRelease ? "" : `<br><span class="meta">Only the person who allocated it (${esc(a.by)}), ${esc(a.initials)} or an admin can release this.</span>`}</div>${canRelease ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
+  ].join("");
+  const placedNow = placed(v), canFlag = !f && !v.manual && v.rocu !== "Overseas / not UK";
+  const fpSection = canFlag ? `<div class="fd-sect"><h4>False positive</h4>
+      <p class="hint">Tell everyone this is not where it appears. It is taken out of that list straight away, and you or an admin can undo it.</p>
+      <fieldset class="fd-opts"><legend class="sr-only">Why is it a false positive?</legend>
+        ${placedNow ? `<label class="fd-opt"><input type="radio" name="fp" value="not_region"><span><b>Not in ${esc(v.rocu)}</b><small>A UK victim, but not in this region.</small></span></label>` : ""}
+        <label class="fd-opt"><input type="radio" name="fp" value="not_uk"><span><b>Not in the UK</b><small>Overseas, or not a UK victim at all.</small></span></label>
+      </fieldset>
+      <div class="fd-row"><label class="field grow">Note (optional)<input id="fd-note" class="search" maxlength="120" placeholder="e.g. head office is in Dublin"></label>
+        <button type="button" class="btn" id="fd-flag" disabled>Flag as false positive</button></div></div>`
+    : (!f && v.manual ? `<div class="fd-sect"><h4>False positive</h4><p class="hint">An admin set this victim's region by hand, so it can't be flagged. Ask an admin to change it.</p></div>` : "");
+  const initial = ME.initials || suggestInitials(ME.username);
+  const allocSection = `<div class="fd-sect"><h4>${a ? "Take over" : "Allocate"}</h4>
+      <p class="hint">${a ? `Currently ${esc(a.initials)}. Put your own initials on it to take over.` : "Put your initials on this victim to show you are working on it."}</p>
+      <div class="fd-row"><label class="field">Initials<input id="fd-init" class="search fd-init" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(initial)}"></label>
+        <label class="chk"><input type="checkbox" id="fd-remember" ${ME.initials ? "" : "checked"}> Remember as mine</label>
+        <button type="button" class="btn" id="fd-alloc">${a ? "Take over" : "Allocate"}</button></div></div>`;
+  $("#fd-body").innerHTML = `${status}${fpSection}${allocSection}<p class="fd-msg" id="fd-msg" role="alert"></p>`;
+  fdlg.hidden = false;
+  const msg = (t) => { $("#fd-msg").textContent = t || ""; };
+  const run = async (fn, ok) => { msg(""); try { await fn(); closeFlag(); afterMark(title); ok(); } catch (e) { msg(e.message); } };
+  document.querySelectorAll('#fd-body input[name="fp"]').forEach((r) => r.addEventListener("change", () => { $("#fd-flag").disabled = false; msg(""); }));
+  $("#fd-flag")?.addEventListener("click", () => {
+    const kind = document.querySelector('#fd-body input[name="fp"]:checked')?.value;
+    if (!kind) return;
+    const note = $("#fd-note").value;
+    run(() => api("/api/victims/flag", { method: "PUT", body: { title, kind, note } }),
+      () => toast(`Flagged: ${kind === "not_uk" ? "not in the UK" : "not in " + v.rocu}.`, { label: "Undo", fn: () => undoFlag(title, true).then(() => toast("Flag removed")).catch((e) => toast(e.message)) }));
+  });
+  $("#fd-unflag")?.addEventListener("click", () => run(() => api(`/api/victims/flag?title=${encodeURIComponent(title)}`, { method: "DELETE" }), () => toast("Flag removed")));
+  $("#fd-release")?.addEventListener("click", () => run(() => api(`/api/victims/alloc?title=${encodeURIComponent(title)}`, { method: "DELETE" }), () => toast("Released")));
+  $("#fd-alloc").addEventListener("click", () => {
+    const initials = $("#fd-init").value.trim().toUpperCase();
+    if (!/^[A-Z]{2,4}$/.test(initials)) { msg("Initials must be 2 to 4 letters."); $("#fd-init").focus(); return; }
+    const remember = $("#fd-remember").checked;
+    run(async () => { await api("/api/victims/alloc", { method: "PUT", body: { title, initials, remember } }); if (remember || !ME.initials) ME.initials = initials; },
+      () => toast(`Allocated to ${initials}.`));
+  });
+  $("#fd-init").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#fd-alloc").click(); } });
+  (document.querySelector('#fd-body input[name="fp"]') || $("#fd-init")).focus();
+  track("modal_open", "flag or allocate");
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("button[data-flag]"); if (b) { e.preventDefault(); openFlag(refVictim(b.dataset.flag)); } });
+$("#fd-close").addEventListener("click", closeFlag);
+fdlg.addEventListener("click", (e) => { if (e.target === fdlg) closeFlag(); });
+
 // ------------------------------------------------------------------ click to copy
-function toast(msg) {
+function toast(msg, action) {
   let t = $("#toast");
   if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
-  t.textContent = msg; t.classList.add("on");
-  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), 2200);
+  t.textContent = msg; t.classList.add("on"); t.classList.toggle("act", !!action);
+  if (action) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "toast-act"; b.textContent = action.label;
+    b.addEventListener("click", () => { t.classList.remove("on"); action.fn(); });
+    t.appendChild(b);
+  }
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("on"), action ? 9000 : 2200);
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall back */ }
@@ -636,6 +740,7 @@ const EVENT_LABEL = {
   password_change: "Changed own password", password_change_failed: "Password change failed",
   user_create: "Created a user", user_update: "Updated a user", user_delete: "Deleted a user",
   placement_set: "Set a victim's region", placement_clear: "Cleared a manual region",
+  victim_flag: "Flagged a false positive", victim_flag_clear: "Undid a false-positive flag", victim_alloc: "Allocated a victim", victim_alloc_clear: "Released a victim allocation",
   onboarding_done: "Finished the welcome tour", onboarding_skipped: "Skipped the welcome tour",
 };
 const eventLabel = (e) => EVENT_LABEL[e] || (e ? e.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : "");
@@ -902,6 +1007,7 @@ trackedSearch("nq", "news", () => { nm.q = $("#nq").value.trim(); loadNews(); })
 trackedSearch("gq", "gangs", loadGangs);
 trackedSearch("aq", "alerts", loadAlerts);
 $("#vgroup").addEventListener("change", () => { vm.group = $("#vgroup").value; vm.page = 0; loadVictims(); track("filter", `victims group: ${vm.group || "all"}`); });
+$("#vmark").addEventListener("change", () => { vm.mark = $("#vmark").value; vm.page = 0; loadVictims(); track("filter", `victims show: ${vm.mark || "all"}`); });
 $("#vsector").addEventListener("change", () => { vm.sector = $("#vsector").value; vm.page = 0; loadVictims(); track("filter", `victims sector: ${vm.sector || "all"}`); });
 $("#vnew").addEventListener("change", () => { vm.newOnly = $("#vnew").checked; vm.page = 0; loadVictims(); track("filter", `victims new only: ${vm.newOnly}`); });
 [["gsource", "gangs source", loadGangs], ["gsort", "gangs sort", loadGangs], ["asource", "alerts source", loadAlerts]].forEach(([id, label, fn]) =>
@@ -913,7 +1019,7 @@ $("#arefresh").addEventListener("click", loadAlerts);
 
 // keyboard: "/" jumps to the search box of the current tab, Esc closes dialogs
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { if (!drawer.hidden) closeDrawer(); else if (!modal.hidden) closeModal(); return; }
+  if (e.key === "Escape") { if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!modal.hidden) closeModal(); return; }
   if (!obEl.hidden) return;
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
   const box = { victims: "#vq", news: "#nq", gangs: "#gq", alerts: "#aq", activity: "#act-q" }[activeTab()];

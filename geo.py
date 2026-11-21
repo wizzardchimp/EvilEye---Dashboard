@@ -366,7 +366,7 @@ def geo_pass(victims, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False
     todo, seen = [], set()
     for v in sorted(victims, key=lambda v: str(v.get("discovered") or ""), reverse=True):
         k = v["key"]
-        if not k or k in seen or is_terminal(geo.get(k)) or v.get("manual"):
+        if not k or k in seen or is_terminal(geo.get(k)) or v.get("manual") or v.get("flag_applied"):
             continue
         seen.add(k)
         if (v.get("text_overseas") or v.get("region_source") == "text-overseas") and not v.get("overseas_weak"):

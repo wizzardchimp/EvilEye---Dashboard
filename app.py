@@ -68,6 +68,8 @@ _geo_running = False
 GEO = geo.load_geo(DATA_DIR)
 geo.load_status(DATA_DIR)
 OVERRIDES = {}          # victim key -> {rocu, note, set_by}: manual placements made by an admin (PostgreSQL)
+FLAGS = {}              # victim key -> {kind, rocu, note, flagged_by, flagged_at}: false positives flagged by any user
+ALLOC = {}              # victim key -> {initials, allocated_by, allocated_at}: "I am working on this"
 
 
 def _sector(a):
@@ -120,6 +122,19 @@ def load_overrides():
         STATE["errors"]["overrides"] = str(e)
 
 
+def load_marks():
+    """Flags and allocations (PostgreSQL) into memory, like the manual placements."""
+    if LEGACY:
+        return
+    try:
+        FLAGS.clear()
+        FLAGS.update({r["key"]: r for r in db.many("select key, kind, rocu, note, flagged_by, flagged_at from victim_flags")})
+        ALLOC.clear()
+        ALLOC.update({r["key"]: r for r in db.many("select key, initials, allocated_by, allocated_at from victim_alloc")})
+    except Exception as e:
+        STATE["errors"]["marks"] = str(e)
+
+
 def _apply_geo(victims):
     """Region, in order of trust: an admin's manual placement, an API result (postcode / Companies House),
     the place-name guess, a probable overseas head office, else Unplaced."""
@@ -140,6 +155,17 @@ def _apply_geo(victims):
             v.update(force="", rocu=geo.OVERSEAS, region_source="text-overseas", town="")
         else:
             v.update(force="", rocu="Unplaced", region_source="", town="")
+        # A user's false-positive flag takes a victim out of the region it was shown in (or out of the UK). It never
+        # overrides an admin's manual placement, and "not in <region>" stops applying if the automatic region has moved on.
+        fl = FLAGS.get(v["key"])
+        v["flag"], v["flag_applied"] = None, False
+        if fl:
+            hit = not ov and (fl["kind"] == "not_uk" or v["rocu"] == fl["rocu"])
+            v["flag"] = {"kind": fl["kind"], "region": fl["rocu"], "by": fl["flagged_by"], "note": fl["note"], "applied": hit,
+                         "at": fl["flagged_at"].isoformat() if fl.get("flagged_at") else ""}
+            if hit:
+                v.update(rocu=geo.OVERSEAS if fl["kind"] == "not_uk" else "Unplaced", force="", region_source="flag", town="")
+                v["flag_applied"] = True
         v["force_name"] = geo.FORCE_NAMES.get(v["force"], "")
 
 
@@ -442,6 +468,7 @@ def _ingest():
             rows[k] = rec
         victims = list(rows.values())
         load_overrides()
+        load_marks()
         _apply_geo(victims)
         new["victims"] = victims
         stamps["rl_victims_gb"] = _now_iso()
@@ -643,6 +670,7 @@ if not LEGACY:
         db.init()
         bootstrap_admin()
         load_overrides()
+        load_marks()
     except Exception as e:                      # keep serving; login reports the database error
         STATE["errors"]["db"] = str(e)
 if STATE["victims"]:
@@ -660,7 +688,7 @@ def current_user():
                       "prev_visit": session.get("prev_visit"), "onboarded_at": session.get("onboarded"), "must_change": False}
     elif isinstance(uid, int):
         try:
-            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at, must_change from users where id=%s", (uid,))
+            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at, must_change, initials from users where id=%s", (uid,))
             if row and row["active"] and session.get("pwv") == _pwv(row["password_hash"]):
                 g.user = row
         except Exception:
@@ -812,7 +840,7 @@ def api_me():
     u = current_user()
     p = _prev_visit()
     return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY,
-                   regions=geo.FILTER_REGIONS, prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")),
+                   regions=geo.FILTER_REGIONS, initials=u.get("initials") or "", prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")),
                    must_change=bool(u.get("must_change")))
 
 
@@ -1077,6 +1105,101 @@ def admin_placement_clear():
     return jsonify(ok=True)
 
 
+# ---- any user: flag a false positive, and put initials on a victim to show it is being worked
+INITIALS_RE = re.compile(r"^[A-Za-z]{2,4}$")
+
+
+def _find_victim(title):
+    key = geo.norm((title or "").strip())
+    return next((v for v in STATE["victims"] if key and v["key"] == key), None)
+
+
+def _marks_changed():
+    load_marks()
+    _apply_geo(STATE["victims"])
+
+
+@app.put("/api/victims/flag")
+def victim_flag_set():
+    if LEGACY:
+        return jsonify(error="Database not connected: flags are unavailable."), 503
+    b = request.get_json(silent=True) or {}
+    v, kind, note = _find_victim(b.get("title")), b.get("kind"), (b.get("note") or "").strip()[:120]
+    if not v:
+        return jsonify(error="Unknown victim."), 404
+    if kind not in ("not_uk", "not_region"):
+        return jsonify(error="Choose: not in this region, or not in the UK."), 400
+    if v["key"] in FLAGS:
+        return jsonify(error="Already flagged as a false positive. Undo that flag first."), 409
+    if v.get("manual"):
+        return jsonify(error="An admin set this victim's region by hand, so it cannot be flagged. Ask an admin to change it."), 409
+    if kind == "not_region" and v["rocu"] not in geo.REGIONS:
+        return jsonify(error="Only a victim shown in a region can be flagged as not in that region."), 400
+    if kind == "not_uk" and v["rocu"] == geo.OVERSEAS:
+        return jsonify(error="Already shown as overseas / not UK."), 400
+    region = v["rocu"]                                   # the region it was shown in: needed to undo/review it, and for "not in <region>"
+    db.run("insert into victim_flags (key, victim, kind, rocu, note, flagged_by) values (%s,%s,%s,%s,%s,%s)",
+           (v["key"], v["post_title"], kind, region, note, current_user()["username"]))
+    _marks_changed()
+    log("victim_flag", f'{v["post_title"]}: ' + ("not in the UK" if kind == "not_uk" else f"not in {region}") + (f' [{note}]' if note else ""))
+    return jsonify(ok=True)
+
+
+@app.delete("/api/victims/flag")
+def victim_flag_clear():
+    if LEGACY:
+        return jsonify(error="Database not connected."), 503
+    v = _find_victim(request.args.get("title"))
+    fl = FLAGS.get(v["key"]) if v else None
+    if not fl:
+        return jsonify(error="That victim is not flagged."), 404
+    u = current_user()
+    if u["role"] != "admin" and u["username"] != fl["flagged_by"]:
+        return jsonify(error=f'Only {fl["flagged_by"]} or an admin can undo this flag.'), 403
+    db.run("delete from victim_flags where key=%s", (v["key"],))
+    _marks_changed()
+    log("victim_flag_clear", v["post_title"])
+    return jsonify(ok=True)
+
+
+@app.put("/api/victims/alloc")
+def victim_alloc_set():
+    if LEGACY:
+        return jsonify(error="Database not connected: allocation is unavailable."), 503
+    b = request.get_json(silent=True) or {}
+    v, initials = _find_victim(b.get("title")), (b.get("initials") or "").strip().upper()
+    if not v:
+        return jsonify(error="Unknown victim."), 404
+    if not INITIALS_RE.match(initials):
+        return jsonify(error="Initials must be 2 to 4 letters."), 400
+    u, prev = current_user(), ALLOC.get(v["key"])
+    db.run("""insert into victim_alloc (key, victim, initials, allocated_by) values (%s,%s,%s,%s)
+              on conflict (key) do update set initials=excluded.initials, allocated_by=excluded.allocated_by, allocated_at=now()""",
+           (v["key"], v["post_title"], initials, u["username"]))
+    if b.get("remember") or not u.get("initials"):
+        db.run("update users set initials=%s where id=%s", (initials, u["id"]))
+    _marks_changed()
+    log("victim_alloc", f'{v["post_title"]} -> {initials}' + (f' (took over from {prev["initials"]})' if prev and prev["initials"] != initials else ""))
+    return jsonify(ok=True, initials=initials)
+
+
+@app.delete("/api/victims/alloc")
+def victim_alloc_clear():
+    if LEGACY:
+        return jsonify(error="Database not connected."), 503
+    v = _find_victim(request.args.get("title"))
+    a = ALLOC.get(v["key"]) if v else None
+    if not a:
+        return jsonify(error="That victim is not allocated."), 404
+    u = current_user()
+    if u["role"] != "admin" and u["username"] != a["allocated_by"] and (u.get("initials") or "") != a["initials"]:
+        return jsonify(error=f'Only {a["initials"]} ({a["allocated_by"]}) or an admin can release this.'), 403
+    db.run("delete from victim_alloc where key=%s", (v["key"],))
+    _marks_changed()
+    log("victim_alloc_clear", f'{v["post_title"]} (was {a["initials"]})')
+    return jsonify(ok=True)
+
+
 # ----------------------------------------------------------------- data queries
 def _region():
     return request.args.get("rocu", "")
@@ -1122,6 +1245,10 @@ def _prev_visit():
 
 def _why_unplaced(v):
     """A plain-English reason a victim has no region yet, so a missing placement is never a mystery."""
+    fl = v.get("flag")
+    if fl and fl.get("applied"):
+        what = "not in the UK" if fl["kind"] == "not_uk" else f'not in {fl["region"]}'
+        return f'Flagged as a false positive by {fl["by"]} ({what})' + (f': "{fl["note"]}"' if fl["note"] else "") + ". Undo the flag to restore the automatic placement."
     if v["rocu"] == geo.OVERSEAS and v.get("overseas_weak"):
         return (f'Its description gives only a country ("{v["text_overseas"]}"). A Companies House match confirmed by its website '
                 "would place it in the UK instead; an admin can also set it by hand.")
@@ -1142,6 +1269,11 @@ def _why_unplaced(v):
     return "Not looked up yet: lookups run in batches after each refresh."
 
 
+def _alloc_view(v):
+    a = ALLOC.get(v["key"])
+    return {"initials": a["initials"], "by": a["allocated_by"], "at": a["allocated_at"].isoformat()} if a else None
+
+
 VIEW_KEYS = ("post_title", "group", "activity", "discovered", "seen", "year", "website", "post_url", "rocu", "force", "force_name",
              "town", "region_source", "registered_name", "manual", "override_note", "description", "reposts", "overseas_weak")
 
@@ -1152,6 +1284,8 @@ def _view(v, prev):
     t = _ts(v.get("seen"))
     d["new"] = bool(prev and t and t > prev)
     d["why"] = _why_unplaced(v)
+    d["flag"] = v.get("flag")
+    d["alloc"] = _alloc_view(v)
     return d
 
 
@@ -1180,6 +1314,7 @@ def api_summary():
                    "from_text": src.get("text", 0), "from_postcode": src.get("postcode", 0),
                    "from_companies_house": src.get("companies-house", 0), "from_manual": src.get("manual", 0),
                    "overseas": by_region.get(geo.OVERSEAS, 0), "unplaced": by_region.get("Unplaced", 0),
+                   "flagged": sum(1 for x in allv if x.get("flag_applied")),
                    "looked_up": sum(1 for x in GEO.values() if geo.is_terminal(x)),
                    "api_enabled": geo.CH_ENABLED, "running": _geo_running,
                    "lookup": {"auth_error": bool(geo.STATUS.get("auth_error")), "rate_limited": bool(geo.STATUS.get("rate_limited")),
@@ -1228,7 +1363,18 @@ SORTS = {"name": lambda v: v["post_title"].lower(), "group": lambda v: v["group"
 
 
 def _filter_victims():
-    items = _uk()
+    mark = request.args.get("mark", "")
+    if mark == "flagged":                    # false positives, including ones flagged out of the selected region
+        r = _region()
+        items = [v for v in STATE["victims"] if v.get("flag") and (not r or r in (v["rocu"], v["flag"]["region"]))]
+    else:
+        items = _uk()
+    if mark == "alloc":
+        items = [v for v in items if v["key"] in ALLOC]
+    elif mark == "mine":
+        u = current_user()
+        ini = u.get("initials") or ""
+        items = [v for v in items if v["key"] in ALLOC and (ALLOC[v["key"]]["allocated_by"] == u["username"] or (ini and ALLOC[v["key"]]["initials"] == ini))]
     if request.args.get("group"):
         items = [v for v in items if v["group"] == request.args["group"]]
     if request.args.get("sector"):
@@ -1262,11 +1408,13 @@ def api_victims_csv():
     out = io.StringIO()
     wr = csv.writer(out)
     wr.writerow(["victim", "town_or_district", "region_rocu", "police_force", "region_basis", "group", "sector",
-                 "first_seen_utc", "website"])
+                 "first_seen_utc", "website", "false_positive_flag", "allocated_to"])
     safe = lambda s: ("'" + str(s)) if str(s)[:1] in ("=", "+", "-", "@") else str(s)      # no spreadsheet formula injection
     for v in items:
         wr.writerow([safe(v["post_title"]), safe(v.get("town") or ""), v["rocu"], v.get("force_name", ""),
-                     v.get("region_source", ""), safe(v["group"]), v["activity"], v.get("seen", ""), safe(v["website"])])
+                     v.get("region_source", ""), safe(v["group"]), v["activity"], v.get("seen", ""), safe(v["website"]),
+                     (v["flag"]["kind"].replace("_", " ") + " by " + v["flag"]["by"]) if v.get("flag") and v["flag"]["applied"] else "",
+                     (ALLOC.get(v["key"]) or {}).get("initials", "")])
     log("export", f"victims csv ({len(items)} rows" + (f", {_region()}" if _region() else "") + ")")
     return Response(out.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=evileye-victims.csv"})
@@ -1465,7 +1613,7 @@ def api_ticker():
     uk_recent = [v for v in recent if v["rocu"] != geo.OVERSEAS]       # probable overseas HQs are not UK incidents
     pick = lambda v: {"title": v["post_title"], "group": v["group"], "sector": v["activity"], "seen": v.get("seen"),
                       "rocu": v["rocu"], "force": v["force_name"], "town": v.get("town", ""), "website": v["website"],
-                      "new": _view(v, prev)["new"]}
+                      "new": _view(v, prev)["new"], "manual": bool(v.get("manual")), "flag": v.get("flag"), "alloc": _alloc_view(v)}
     n_uk, n_reg = max(1, _int("uk", 5, 1500)), max(1, _int("reg", 5, 1500))      # "View more" asks for longer lists
     reg_all = [x for x in recent if x["rocu"] == region] if region else []
     return jsonify(region=region, uk=[pick(v) for v in uk_recent[:n_uk]], uk_total=len(uk_recent),

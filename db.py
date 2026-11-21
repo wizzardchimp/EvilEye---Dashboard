@@ -50,6 +50,25 @@ alter table users add column if not exists prev_visit timestamptz;
 alter table users add column if not exists onboarded_at timestamptz;
 alter table users add column if not exists must_change boolean not null default false;
 alter table placement_overrides add column if not exists town text not null default '';
+
+-- false-positive flags (any user) and "I am working on this" allocations
+create table if not exists victim_flags (
+    key        text primary key,
+    victim     text not null,
+    kind       text not null check (kind in ('not_uk', 'not_region')),
+    rocu       text not null default '',
+    note       text not null default '',
+    flagged_by text not null default '',
+    flagged_at timestamptz not null default now()
+);
+create table if not exists victim_alloc (
+    key          text primary key,
+    victim       text not null,
+    initials     text not null,
+    allocated_by text not null default '',
+    allocated_at timestamptz not null default now()
+);
+alter table users add column if not exists initials text not null default '';
 """
 
 
