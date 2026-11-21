@@ -161,3 +161,15 @@ The header logo is split in two: the shield (`static/mark-off.png` red eye, `sta
 "EvilEye" text. **Click the shield** to keep the screen awake while the tab is visible: the eye turns green (and so does
 the browser-tab icon) while it is on, and the choice is remembered per browser. **Click the EvilEye text** to return to the
 Overview. The sign-in page shows the same mark.
+
+## Backup
+`main` is mirrored to a second GitHub repository, <https://github.com/wizzardchimp/Evil-Eye-Dashboard>, as a backup of the
+code. Railway deploys from `wizzardchimp/EvilEye---Dashboard` only. The backup is a plain copy of the same history, so after
+each change push to both:
+
+```bash
+git remote add backup https://github.com/wizzardchimp/Evil-Eye-Dashboard   # once per clone
+git push origin main && git push backup main
+```
+
+It holds code only: secrets live in Railway variables and the database and data volume are not in git.
