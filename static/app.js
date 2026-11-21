@@ -53,10 +53,20 @@ const rq = (extra = {}) => { const p = new URLSearchParams(extra); if (region) p
 const TABS = { overview: loadOverview, victims: loadVictims, news: loadNews, gangs: loadGangs, alerts: loadAlerts, users: loadUsers, activity: loadActivity };
 const REGION_TABS = ["overview", "victims", "gangs"];
 const activeTab = () => document.querySelector(".tab.active").dataset.tab;
+const tabsEl = $("#tabs");
+function tabFade() {       // only on screens too narrow for every tab: fade the edge that has more tabs beyond it
+  const max = tabsEl.scrollWidth - tabsEl.clientWidth;
+  tabsEl.classList.toggle("fade-l", max > 2 && tabsEl.scrollLeft > 2);
+  tabsEl.classList.toggle("fade-r", max > 2 && tabsEl.scrollLeft < max - 2);
+}
+tabsEl.addEventListener("scroll", tabFade, { passive: true });
+window.addEventListener("resize", tabFade);
 function showTab(name, fromClick) {
   const btn = document.querySelector(`.tab[data-tab="${name}"]`);
   if (!btn || btn.hidden) return;
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === btn));
+  if (tabsEl.scrollWidth > tabsEl.clientWidth) btn.scrollIntoView({ inline: "center", block: "nearest" });
+  tabFade();
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
   if (fromClick) track("tab_view", name);
   updateFilterBar(); syncHash(); refreshCurrent();
@@ -1103,6 +1113,7 @@ async function init() {
   buildRegionSelect();
   if (!ME.onboarded) startOnboarding();
   if (ME.role === "admin" && ME.database) document.querySelectorAll(".admin-only").forEach((el) => { el.hidden = false; });
+  tabFade();
   $("#usermenu").title = `Account: ${ME.username}`;
   // record this visit first so "new since your last visit" is measured against the previous one
   let refreshing = false;
