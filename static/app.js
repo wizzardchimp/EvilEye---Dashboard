@@ -598,6 +598,19 @@ document.addEventListener("click", async (e) => {
   } else toast("Copy failed: select the text manually");
 });
 
+// ------------------------------------------------------------------ event names shown to admins (the raw name stays as the tooltip and filter value)
+const EVENT_LABEL = {
+  login: "Signed in", login_failed: "Failed sign-in", logout: "Signed out", page_open: "Opened the dashboard", refresh: "Refreshed data",
+  tab_view: "Viewed a page", search: "Searched", filter: "Changed a filter", region_change: "Changed region", modal_open: "Opened a breakdown",
+  victim_view: "Opened victim details", copy_leak_site: "Copied a leak-site address", link_click: "Clicked an outside link", export: "Exported data",
+  screen_wake_on: "Screen wake on", screen_wake_off: "Screen wake off", screen_wake_failed: "Screen wake failed",
+  password_change: "Changed own password", password_change_failed: "Password change failed",
+  user_create: "Created a user", user_update: "Updated a user", user_delete: "Deleted a user",
+  placement_set: "Set a victim's region", placement_clear: "Cleared a manual region",
+};
+const eventLabel = (e) => EVENT_LABEL[e] || (e ? e.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : "");
+const eventBadge = (r) => `<span class="badge ${/failed|delete|locked/.test(r.event + r.detail) ? "off" : "src"}" title="${esc(r.event)}">${esc(eventLabel(r.event))}</span>`;
+
 // ------------------------------------------------------------------ admin: users
 const genPassword = () => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789-_";
@@ -689,7 +702,7 @@ async function showUserActivity(u) {
   let off = 0;
   const load = async () => {
     const d = await api(`/api/admin/activity?${new URLSearchParams({ user: u.username, limit: "40", offset: String(off) })}`);
-    const rows = d.items.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td><span class="badge ${/failed|delete|locked/.test(r.event + r.detail) ? "off" : "src"}">${esc(r.event)}</span></td><td>${esc(r.detail)}</td></tr>`).join("");
+    const rows = d.items.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td>${eventBadge(r)}</td><td>${esc(r.detail)}</td></tr>`).join("");
     const body = $("#ua-rows");
     body.innerHTML = (off ? body.innerHTML : "") + (rows || '<tr><td colspan="3" class="ldr">no activity recorded</td></tr>');
     off += d.items.length; $("#ua-more").hidden = off >= d.total;
@@ -716,10 +729,10 @@ async function loadActivity(more) {
     const keepU = $("#act-user").value, keepE = $("#act-event").value;
     if ($("#act-user").options.length <= 1 || $("#act-event").options.length - 1 !== d.events.length) {
       $("#act-user").innerHTML = '<option value="">All users</option>' + d.users.map((u) => `<option>${esc(u)}</option>`).join("");
-      $("#act-event").innerHTML = '<option value="">All events</option>' + d.events.map((u) => `<option>${esc(u)}</option>`).join("");
+      $("#act-event").innerHTML = '<option value="">All events</option>' + [...d.events].sort((a, b) => eventLabel(a).localeCompare(eventLabel(b))).map((u) => `<option value="${esc(u)}">${esc(eventLabel(u))}</option>`).join("");
       $("#act-user").value = keepU; $("#act-event").value = keepE;
     }
-    const rows = d.items.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td>${esc(r.username || "—")}</td><td><span class="badge ${/failed|delete|locked/.test(r.event + r.detail) ? "off" : "src"}">${esc(r.event)}</span></td><td>${esc(r.detail)}</td><td class="meta">${esc(r.ip)}</td></tr>`).join("");
+    const rows = d.items.map((r) => `<tr><td>${fmtTime(r.ts)}</td><td>${esc(r.username || "—")}</td><td>${eventBadge(r)}</td><td>${esc(r.detail)}</td><td class="meta">${esc(r.ip)}</td></tr>`).join("");
     body.innerHTML = (more === true ? body.innerHTML : "") + (rows || '<tr><td colspan="5" class="ldr">no activity matches</td></tr>');
     actOffset += d.items.length;
     $("#act-count").textContent = `${d.total} events (showing ${actOffset})`;

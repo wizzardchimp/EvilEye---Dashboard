@@ -72,7 +72,9 @@ Accounts live in PostgreSQL (`DATABASE_URL`). The first admin is created from `E
 Logged: logins, failed logins, logouts, page opens, refreshes, tab views (including pages reached by a shared link), searches,
 filters, region changes, victim details opened, **screen wake on / off / failed** (with the browser's reason), **outbound links
 clicked** (where it was clicked and the destination host and path, query strings are not kept), **leak-site addresses copied**
-(the gang or victim and the exact address), password changes and all admin actions. Feed-supplied links are only ever used as
+(the gang or victim and the exact address), password changes and all admin actions.
+The Activity tab and each user's activity list show friendly event names ("Copied a leak-site address", "Screen wake on") with the
+raw name as a tooltip; the filter and the CSV export keep the raw names (`copy_leak_site`, `screen_wake_on`). Feed-supplied links are only ever used as
 http(s) links.
 Passwords are salted scrypt hashes, 10+ characters. A username locks for 15 minutes after 6 failed logins. Changing or
 resetting a password signs that user out everywhere.
