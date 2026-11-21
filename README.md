@@ -51,12 +51,24 @@ Anything else shows as "region unknown". Lookups run in a bounded batch (`GEO_BU
 are cached in `DATA_DIR`, so coverage grows with each refresh.
 
 **Companies House matching** accepts a near-exact name, or a good name plus the victim's website domain agreeing with
-the company name (catches trading names and "Ltd"/"Group" variants). It also retries with generic words removed.
-Earlier "no match" results are retried automatically whenever the matching rules change (`MATCH_VERSION` in `geo.py`).
+the company name (catches trading names and "Ltd"/"Group" variants). Abbreviations are expanded on both sides, so
+"Saddlers Court MFG" matches "SADDLERS COURT MANUFACTURING LIMITED" (and `saddlerscourtmfg.com` agrees with it); up to
+three searches are made per victim: the name as written, "t/a" / bracketed trading names, abbreviations expanded, then
+generic words removed. Searches are paced under the Companies House limit (600 per 5 minutes), newest victims first.
+Earlier "no match" results are retried automatically whenever the matching rules change (`MATCH_VERSION` in `geo.py`);
+a rejected key or a rate limit never records "no match", so those victims are simply retried.
+
+**When a victim has no region, the page says why.** The Overview shows a warning if Companies House rejects the key
+(no register lookups can run), plus how many unplaced victims are still waiting for a lookup or had no register match.
+The victim drawer's Basis row gives the reason for that victim (no location in the description, not looked up yet, no
+register match, key rejected, lookup off). The last run's counts are kept in `DATA_DIR/geo_status.json`.
 
 **Overseas / not UK:** ransomware.live sometimes tags foreign companies as UK. A victim is flagged "Overseas / not UK"
 when the first "headquartered / based in ..." phrase names a foreign place, nothing points to the UK, and the website is
 not `.uk`. Offices abroad do not count. These are left out of the "latest UK incidents" ticker.
+A description that is only a bare country ("United States") is a *weak* signal, because the source data is often wrong
+about it: those victims are still marked overseas, but are looked up in Companies House under a stricter rule (the
+website domain must also agree with the registered name), and a confirmed match moves them into their UK region.
 
 **Manual placement:** an admin can set any victim's region (or Overseas / not UK) from the **Edit region** button on the
 UK Victims tab, with an optional note. It overrides every automatic method, is stored in PostgreSQL, survives refreshes

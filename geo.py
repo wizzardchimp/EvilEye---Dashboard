@@ -12,6 +12,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -39,7 +40,7 @@ FORCE_TO_ROCU.update({"police-scotland": "Scotland", "northern-ireland": "Northe
 REGIONS = list(ROCU_FORCES) + ["Scotland", "Northern Ireland"]
 OVERSEAS = "Overseas / not UK"            # tagged UK by the source, but based abroad
 FILTER_REGIONS = REGIONS + [OVERSEAS, "Unplaced"]
-MATCH_VERSION = 2                          # bump when matching rules change: older "no match" results are retried
+MATCH_VERSION = 3                          # bump when matching rules change: older "no match" results are retried
 FORCE_NAMES = {f: f.replace("-", " ").title().replace(" And ", " and ") for f in FORCE_TO_ROCU}
 FORCE_NAMES.update({"west-mercia": "West Mercia", "city-of-london": "City of London",
                     "metropolitan": "Metropolitan Police", "police-scotland": "Police Scotland",
@@ -204,6 +205,16 @@ def detect_overseas(text, website=""):
     return f.group(0) if f else None
 
 
+_BARE_RE = re.compile(r"^\s*(" + _FOREIGN + r")(?:\s*[,/&]\s*(?:" + _FOREIGN + r"))*\s*\.?\s*$", re.I)
+
+
+def bare_foreign(desc):
+    """A description that is nothing but a foreign country or city ("United States"). A weak signal: unlike an explicit
+    "based in ..." phrase it can be overridden by a confirmed Companies House match (name AND website agree)."""
+    m = _BARE_RE.match(desc or "")
+    return m.group(1) if m else None
+
+
 # ----------------------------------------------------------------- Companies House
 _GENERIC = re.compile(r"\b(group|holdings|holding|services|solutions|international|the|uk|limited|ltd|plc|llp)\b", re.I)
 _DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$")
@@ -220,23 +231,63 @@ def domain_label(site):
     return re.sub(r"[^a-z0-9]", "", label)
 
 
+# Company names are often abbreviated in leak posts ("Saddlers Court MFG") but not on the register ("... MANUFACTURING LIMITED").
+ABBR = {"mfg": "manufacturing", "mfr": "manufacturer", "mfrs": "manufacturers", "eng": "engineering", "engrg": "engineering",
+        "svcs": "services", "svc": "service", "intl": "international", "grp": "group", "corp": "corporation", "bros": "brothers",
+        "assoc": "associates", "inds": "industries", "mgmt": "management", "constr": "construction"}
+
+
+def expand_abbr(name):
+    return re.sub(r"[A-Za-z]+", lambda m: ABBR.get(m.group(0).lower(), m.group(0)), name or "")
+
+
+def norm_match(name):
+    """norm() with abbreviations expanded: used to compare names, never to build keys."""
+    return norm(expand_abbr(name))
+
+
 def _compact(name):
-    return re.sub(r"\s+", "", norm(name))
+    return re.sub(r"\s+", "", norm_match(name))
+
+
+def expand_label(label):
+    """'saddlerscourtmfg' -> 'saddlerscourtmanufacturing' (a domain with an abbreviated ending)."""
+    for ab in sorted(ABBR, key=len, reverse=True):
+        if label.endswith(ab) and len(label) > len(ab) + 3:
+            return label[: -len(ab)] + ABBR[ab]
+    return label
+
+
+def name_variants(name):
+    """The names worth searching for: as written, abbreviations expanded, generic words dropped, and each side of
+    'A t/a B' / 'A (B)'."""
+    out, seen = [], set()
+    parts = [p.strip() for p in re.split(r"\s+(?:t/a|trading as|formerly)\s+|[()]", name or "") if p and len(p.strip()) >= 3]
+    bases = [name] + parts
+    # every distinct name as written first, then abbreviations expanded, then generic words dropped
+    ordered = bases + [expand_abbr(b) for b in bases] + [re.sub(r"\s+", " ", _GENERIC.sub(" ", expand_abbr(b))).strip() for b in bases]
+    for v in ordered:
+        k = norm(v)                                        # plain key: 'X MFG' and 'X manufacturing' are different searches
+        if v and len(k) >= 3 and k not in seen:
+            seen.add(k)
+            out.append(v)
+    return out[:3]                                         # at most three searches per victim (Companies House rate limit)
 
 
 def score_candidate(name, label, item):
-    """-> (accepted, similarity, confidence). Accept on a near-exact name, or a good name plus the website domain
+    """-> (accepted, similarity, confidence, domain_agrees). Accept on a near-exact name, or a good name plus the website domain
     agreeing with the company name (catches trading names and Ltd/Group variants)."""
-    s = difflib.SequenceMatcher(None, norm(name), norm(item.get("title"))).ratio()
+    s = difflib.SequenceMatcher(None, norm_match(name), norm_match(item.get("title"))).ratio()
     c = _compact(item.get("title"))
-    dom = len(label) >= 4 and bool(c) and (c == label or c.startswith(label) or label.startswith(c)
-                                           or difflib.SequenceMatcher(None, c, label).ratio() >= 0.85)
+    labels = {label, expand_label(label)} if label else set()
+    dom = bool(c) and any(len(l) >= 4 and (c == l or c.startswith(l) or l.startswith(c)
+                                           or difflib.SequenceMatcher(None, c, l).ratio() >= 0.85) for l in labels)
     active = item.get("company_status") == "active"
     if s >= 0.92:
-        return True, s, "name"
+        return True, s, "name", dom
     if dom and (s >= 0.75 or (s >= 0.6 and active)):
-        return True, s, "name+domain"
-    return False, s, ""
+        return True, s, "name+domain", dom
+    return False, s, "", dom
 
 
 def _ch_search(q):
@@ -245,13 +296,12 @@ def _ch_search(q):
     return r
 
 
-def resolve_company(name, website=""):
-    """Companies House: name (and website domain) -> registered-office postcode -> force. Needs a key."""
+def resolve_company(name, website="", strict=False):
+    """Companies House: name (and website domain) -> registered-office postcode -> force. Needs a key.
+    strict=True (for victims whose description only names a foreign country) accepts a match only when the website
+    domain also agrees with the company name."""
     label = domain_label(website)
-    queries = [name]
-    simple = re.sub(r"\s+", " ", _GENERIC.sub(" ", name)).strip()
-    if simple and norm(simple) != norm(name) and len(simple) >= 3:
-        queries.append(simple)
+    queries = name_variants(name) or [name]
     best, best_key = None, (-1, -1, -1.0)
     for i, q in enumerate(queries):
         try:
@@ -264,7 +314,9 @@ def resolve_company(name, website=""):
         except Exception:
             return {"status": "error"}
         for it in items:
-            ok, s, conf = score_candidate(name, label, it)
+            ok, s, conf, dom = score_candidate(name, label, it)
+            if strict and not (dom and s >= 0.85):
+                continue
             if ok and (it.get("address") or {}).get("postal_code"):
                 key = (1, 1 if it.get("company_status") == "active" else 0, s)
                 if key > best_key:
@@ -279,6 +331,23 @@ def resolve_company(name, website=""):
     rec["company"] = best.get("title")
     rec["confidence"] = best_conf
     return rec
+
+
+STATUS = {"auth_error": False, "rate_limited": False, "last_run": None, "tried": 0, "placed": 0, "no_match": 0, "errors": 0}
+
+
+def load_status(data_dir: Path):
+    try:
+        STATUS.update(json.loads((data_dir / "geo_status.json").read_text()))
+    except Exception:
+        pass
+
+
+def save_status(data_dir: Path):
+    try:
+        (data_dir / "geo_status.json").write_text(json.dumps(STATUS))
+    except Exception:
+        pass
 
 
 TERMINAL = ("placed", "no-match", "no-force", "no-postcode")
@@ -300,8 +369,8 @@ def geo_pass(victims, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False
         if not k or k in seen or is_terminal(geo.get(k)) or v.get("manual"):
             continue
         seen.add(k)
-        if v.get("text_overseas") or v.get("region_source") == "text-overseas":
-            continue            # probable overseas head office: do not match it to a UK company
+        if (v.get("text_overseas") or v.get("region_source") == "text-overseas") and not v.get("overseas_weak"):
+            continue            # explicit overseas head office: do not match it to a UK company
         # a victim already placed from place names only needs the API if there is a postcode to make it precise
         if v.get("region_source") == "text" and not v.get("postcode_hint"):
             continue
@@ -309,6 +378,7 @@ def geo_pass(victims, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False
             continue            # nothing to look up with; retried automatically once a key is configured
         todo.append(v)
     done = 0
+    STATUS.update(tried=0, placed=0, no_match=0, errors=0, rate_limited=False)
     for v in todo[:budget]:
         if stop():
             break
@@ -317,12 +387,20 @@ def geo_pass(victims, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False
             rec = resolve_postcode(v["postcode_hint"])
             rec["source"] = "postcode"
         if (not rec or rec["status"] != "placed") and CH_ENABLED:
-            rec, used_ch = resolve_company(v["post_title"], v.get("website", "")), True
+            rec, used_ch = resolve_company(v["post_title"], v.get("website", ""), strict=bool(v.get("overseas_weak"))), True
             rec["source"] = "companies-house"
         if not rec:
             continue
-        if rec["status"] in ("rate-limited", "auth-error"):
+        if rec["status"] == "auth-error":
+            STATUS["auth_error"] = True              # the key was rejected: say so on the page instead of failing quietly
             break
+        if rec["status"] == "rate-limited":
+            STATUS["rate_limited"] = True
+            break
+        if used_ch:
+            STATUS["auth_error"] = False
+        STATUS["tried"] += 1
+        STATUS["placed" if rec["status"] == "placed" else "errors" if rec["status"] == "error" else "no_match"] += 1
         rec["v"] = MATCH_VERSION
         geo[v["key"]] = rec
         done += 1
@@ -330,4 +408,6 @@ def geo_pass(victims, geo, data_dir: Path, budget=GEO_BUDGET, stop=lambda: False
             save_geo(data_dir, geo)
         time.sleep(0.55 if used_ch else 0.15)   # Companies House allows 600 requests / 5 min
     save_geo(data_dir, geo)
+    STATUS["last_run"] = datetime.now(timezone.utc).isoformat()
+    save_status(data_dir)
     return done

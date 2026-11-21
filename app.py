@@ -66,6 +66,7 @@ STATE = {"victims": [], "gangs": [], "intel": [], "news": [], "last_refresh": {}
 _refreshing = False
 _geo_running = False
 GEO = geo.load_geo(DATA_DIR)
+geo.load_status(DATA_DIR)
 OVERRIDES = {}          # victim key -> {rocu, note, set_by}: manual placements made by an admin (PostgreSQL)
 
 
@@ -417,7 +418,12 @@ def _ingest():
             title = v.get("post_title") or ""
             hit = geo.place_text(title + ". " + desc)
             pc = geo.postcode_in(desc)
+            site = (v.get("website") or "").lower().rstrip("/")
             over = None if (hit or pc) else geo.detect_overseas(title + ". " + desc, v.get("website") or "")
+            weak = False
+            if not over and not hit and not pc and not site.endswith(".uk"):
+                over = geo.bare_foreign(desc)                      # e.g. a description that is just "United States"
+                weak = bool(over)
             rec = {
                 "post_title": title, "key": geo.norm(title), "group": v.get("group_name") or "unknown",
                 "activity": _sector(v.get("activity")), "discovered": v.get("published") or v.get("discovered"),
@@ -425,7 +431,7 @@ def _ingest():
                 "website": (v.get("website") or "").strip(), "post_url": v.get("post_url") or "",
                 "description": desc[:700], "reposts": 0,
                 "text_force": hit[0] if hit else "", "text_term": hit[1] if hit else "",
-                "postcode_hint": pc, "text_overseas": over or "", "registered_name": "", "town": ""}
+                "postcode_hint": pc, "text_overseas": over or "", "overseas_weak": weak, "registered_name": "", "town": ""}
             k = (rec["key"] or title, rec["group"])
             old = rows.get(k)
             if old:
@@ -1114,8 +1120,30 @@ def _prev_visit():
     return _ts(p) if p else None
 
 
+def _why_unplaced(v):
+    """A plain-English reason a victim has no region yet, so a missing placement is never a mystery."""
+    if v["rocu"] == geo.OVERSEAS and v.get("overseas_weak"):
+        return (f'Its description gives only a country ("{v["text_overseas"]}"). A Companies House match confirmed by its website '
+                "would place it in the UK instead; an admin can also set it by hand.")
+    if v["rocu"] != "Unplaced":
+        return ""
+    st = (GEO.get(v["key"]) or {}).get("status")
+    if st == "no-match":
+        return "Looked up in Companies House: no company matched this name. An admin can set its region by hand."
+    if st in ("no-postcode", "no-force"):
+        return "A company matched, but its registered address could not be turned into a police region."
+    if not geo.CH_ENABLED:
+        return "Companies House lookup is off (no COMPANIES_HOUSE_KEY set)."
+    if geo.STATUS.get("auth_error"):
+        return "Companies House rejected the API key, so no lookups can run. Check COMPANIES_HOUSE_KEY in Railway."
+    d = (v.get("description") or "").strip().lower()
+    if d in ("", "n/a", "na", "none", "-"):
+        return "Its description has no location. It will be looked up in Companies House by name (lookups run in batches after each refresh)."
+    return "Not looked up yet: lookups run in batches after each refresh."
+
+
 VIEW_KEYS = ("post_title", "group", "activity", "discovered", "seen", "year", "website", "post_url", "rocu", "force", "force_name",
-             "town", "region_source", "registered_name", "manual", "override_note", "description", "reposts")
+             "town", "region_source", "registered_name", "manual", "override_note", "description", "reposts", "overseas_weak")
 
 
 def _view(v, prev):
@@ -1123,6 +1151,7 @@ def _view(v, prev):
     d = {k: v.get(k, "") for k in VIEW_KEYS}
     t = _ts(v.get("seen"))
     d["new"] = bool(prev and t and t > prev)
+    d["why"] = _why_unplaced(v)
     return d
 
 
@@ -1152,7 +1181,11 @@ def api_summary():
                    "from_companies_house": src.get("companies-house", 0), "from_manual": src.get("manual", 0),
                    "overseas": by_region.get(geo.OVERSEAS, 0), "unplaced": by_region.get("Unplaced", 0),
                    "looked_up": sum(1 for x in GEO.values() if geo.is_terminal(x)),
-                   "api_enabled": geo.CH_ENABLED, "running": _geo_running})
+                   "api_enabled": geo.CH_ENABLED, "running": _geo_running,
+                   "lookup": {"auth_error": bool(geo.STATUS.get("auth_error")), "rate_limited": bool(geo.STATUS.get("rate_limited")),
+                              "last_run": geo.STATUS.get("last_run"),
+                              "no_match": sum(1 for x in allv if x["rocu"] == "Unplaced" and (GEO.get(x["key"]) or {}).get("status") == "no-match"),
+                              "pending": sum(1 for x in allv if x["rocu"] == "Unplaced" and not geo.is_terminal(GEO.get(x["key"])))}})
 
 
 KINDS = {"year": ("year", "UK victims by year"), "gang": ("group", "UK victims by gang"),

@@ -577,3 +577,7 @@ select.search { flex: 0 1 210px; }
 .strength { font-size: 12px; color: var(--muted); min-height: 16px; }
 .pr-msg { font-size: 13px; color: var(--bad); padding: 9px 12px; border-radius: 8px; background: color-mix(in srgb, var(--bad) 10%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent); }
 .sr-only-input { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+
+.warnbox { margin: 8px 0 0; padding: 9px 12px; border-radius: 8px; font-size: 13px; line-height: 1.45; color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 36%, transparent); }
+.warnbox[hidden] { display: none; }

@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=39">
+  <link rel="stylesheet" href="/static/style.css?v=40">
 </head>
 <body>
   <header class="topbar">
@@ -79,6 +79,7 @@
         <div class="card-head"><h3>UK victims by ROCU region</h3><button id="region-clear" class="more" type="button" hidden>Show all UK</button></div>
         <div id="chart-regions" class="region-strip" role="group" aria-label="Filter by ROCU region"></div>
         <p id="region-note" class="hint"></p>
+        <p id="region-warn" class="warnbox" role="alert" hidden></p>
       </div>
       <div class="chart-grid">
         <div class="card" id="card-year">
@@ -332,6 +333,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=41"></script>
+  <script src="/static/app.js?v=42"></script>
 </body>
 </html>

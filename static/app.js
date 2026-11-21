@@ -197,9 +197,22 @@ async function loadOverview() {
       </button>`).join("") || '<div class="ldr">no data yet</div>';
     $("#region-clear").hidden = !region;
     balanceStrip();
-    const p = d.placement;
-    $("#region-note").innerHTML = `<strong>${p.placed}</strong> of ${p.total} victims placed to a UK region (${p.from_text} from place names, ${p.from_postcode} postcodes, ${p.from_companies_house} Companies House, ${p.from_manual} set manually). ` +
-      `${p.overseas} look overseas / not UK, ${p.unplaced} still unplaced. ${p.api_enabled ? "" : "Companies House lookup is off: set COMPANIES_HOUSE_KEY. "}${p.running ? "<em>Looking up regions now…</em>" : ""}`;
+    const p = d.placement, lk = p.lookup || {};
+    let note = `<strong>${p.placed}</strong> of ${p.total} victims placed to a UK region (${p.from_text} from place names, ${p.from_postcode} postcodes, ${p.from_companies_house} Companies House, ${p.from_manual} set manually). ` +
+      `${p.overseas} look overseas / not UK, ${p.unplaced} still unplaced.`;
+    if (!p.api_enabled) note += " Companies House lookup is off: set COMPANIES_HOUSE_KEY.";
+    else if (!lk.auth_error) {
+      const bits = [];
+      if (lk.pending) bits.push(`${lk.pending} waiting for a register lookup`);
+      if (lk.no_match) bits.push(`${lk.no_match} with no Companies House match`);
+      if (bits.length) note += ` Of the unplaced: ${bits.join(", ")}.`;
+      if (lk.rate_limited) note += " Companies House asked us to slow down; the rest will be looked up after the next refresh.";
+    }
+    if (p.running) note += " <em>Looking up regions now…</em>";
+    $("#region-note").innerHTML = note;
+    const warn = $("#region-warn");
+    warn.hidden = !(p.api_enabled && lk.auth_error);
+    if (!warn.hidden) warn.textContent = "Companies House is rejecting the API key, so no register lookups are running. Victims whose description gives no location (for example “N/A”) cannot be placed until it is fixed." + (ME.role === "admin" ? " Check COMPANIES_HOUSE_KEY in Railway." : " Ask an admin to check it.");
     const nb = $("#newbar");
     if (d.new_total > 0 && ME.prev_visit) {
       nb.hidden = false;
@@ -373,18 +386,20 @@ $("#victim-rows").addEventListener("keydown", (e) => { if (e.key === "Enter") op
 const drawer = $("#drawer"), backdrop = $("#drawer-backdrop");
 function closeDrawer() { drawer.hidden = true; backdrop.hidden = true; }
 const BASIS = { text: "a place name in its description", postcode: "a postcode in its description", "companies-house": "its Companies House registered office",
-  manual: "set manually by an admin", "text-overseas": "its description says it is based abroad" };
+  manual: "set manually by an admin" };
 function openVictim(v) {
   track("victim_view", v.post_title);
   $("#dr-title").innerHTML = `${esc(v.post_title)}${townLabel(v)}`;
-  const basis = v.region_source ? `Placed using ${BASIS[v.region_source] || v.region_source}.` : "Not placed yet: no postcode, place name or Companies House match.";
+  const basis = v.region_source === "text-overseas" ? "Marked overseas because its description says it is based abroad."
+    : v.region_source ? `Placed using ${BASIS[v.region_source] || v.region_source}.`
+    : (v.why || "Not placed yet: no postcode, place name or Companies House match.");
   const canEdit = ME.role === "admin" && ME.database;
   $("#dr-body").innerHTML = `
     <div>${newBadge(v).trim()} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
     <dl class="dl">
       <dt>First seen</dt><dd>${fmtTime(v.seen || v.discovered)}</dd>
       <dt>Region</dt><dd>${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) ? ` · ${esc(v.town)}` : ""}</dd>
-      <dt>Basis</dt><dd>${esc(basis)}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}</dd>
+      <dt>Basis</dt><dd>${esc(basis)}${v.region_source && v.why ? ` ${esc(v.why)}` : ""}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}</dd>
       ${v.registered_name ? `<dt>Registered as</dt><dd>${esc(v.registered_name)}</dd>` : ""}
       ${isDomain(v.website) ? `<dt>Website</dt><dd><a href="https://${esc(v.website)}" target="_blank" rel="noopener noreferrer">${esc(v.website)}</a></dd>` : ""}
       ${v.reposts ? `<dt>Re-posted</dt><dd>${v.reposts} more time${v.reposts === 1 ? "" : "s"} by the same group</dd>` : ""}
