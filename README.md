@@ -177,11 +177,23 @@ change is logged as "first sign-in: chose own password". The form carries the us
 can offer to save it.
 
 ## Welcome tour
-The first time a user signs in they see a welcome screen (three bullets: what EvilEye is) and then **Choose your local ROCU
-region** (each region lists the police forces it covers and how many victims are on record). Choosing a region saves it as
-their preference and applies it; Skip leaves it unchanged. It is shown once per user (`users.onboarded_at`) and can be
-reopened from the Account button. Finishing or skipping is written to the activity log. Without a database it is remembered
-for the session only.
+The first time a user signs in (after choosing their own password) they are taken through four short steps, with Back and
+"Skip for now" throughout:
+
+1. **Welcome**: three bullets on what EvilEye is.
+2. **Light or dark?** Two cards with a small preview of each look. Choosing one applies it to the whole page straight away
+   (arrow keys work too) and saves it. The choice is kept on the account (`users.theme`, `PUT /api/me/theme`) as well as in
+   the browser, so it follows the person to other devices; the header half-filled-circle button changes it later and saves
+   the same way. People who have never chosen keep this browser's last setting.
+3. **What the icons mean**: every header icon (Refresh, Light or dark, Account, Sign out) and every marker on a breach
+   (Flag or allocate, the initials badge, False positive, New, the outside-link arrow, Copy) with a sentence on what it is
+   for. The icons are taken from the live buttons on the page, so the guide always shows exactly what is on screen.
+4. **Choose your local ROCU region** (each region lists the police forces it covers and how many victims are on record).
+   Choosing a region saves it as their preference and applies it.
+
+Skipping at any step leaves the remaining choices unchanged but keeps anything already chosen (for example the look). The tour
+is shown once per user (`users.onboarded_at`) and can be shown again from the Account button ("Show the welcome tour"). Finishing
+or skipping is written to the activity log. Without a database it is remembered for the session only.
 
 ## Look and feel
 The default theme is a slightly lightened dark. The contrast button in the header (and on the sign-in page) inverts it to a

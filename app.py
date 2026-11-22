@@ -714,10 +714,11 @@ def current_user():
     if LEGACY:
         if uid == "legacy" and session.get("ok"):
             g.user = {"id": 0, "username": "admin", "role": "admin", "region": session.get("region", ""), "legacy": True,
-                      "prev_visit": session.get("prev_visit"), "onboarded_at": session.get("onboarded"), "must_change": False}
+                      "prev_visit": session.get("prev_visit"), "onboarded_at": session.get("onboarded"), "must_change": False,
+                      "theme": session.get("theme", "")}
     elif isinstance(uid, int):
         try:
-            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at, must_change, initials from users where id=%s", (uid,))
+            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at, must_change, initials, theme from users where id=%s", (uid,))
             if row and row["active"] and session.get("pwv") == _pwv(row["password_hash"]):
                 g.user = row
         except Exception:
@@ -869,8 +870,21 @@ def api_me():
     u = current_user()
     p = _prev_visit()
     return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY,
-                   regions=geo.FILTER_REGIONS, initials=u.get("initials") or "", prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")),
+                   regions=geo.FILTER_REGIONS, initials=u.get("initials") or "", theme=u.get("theme") or "", prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")),
                    must_change=bool(u.get("must_change")))
+
+
+@app.put("/api/me/theme")
+def api_me_theme():
+    """The person's chosen look, kept on their account so it follows them to other devices."""
+    t = (request.get_json(silent=True) or {}).get("theme")
+    if t not in ("light", "dark"):
+        return jsonify(error="Choose light or dark."), 400
+    if LEGACY:
+        session["theme"] = t
+    else:
+        db.run("update users set theme=%s where id=%s", (t, current_user()["id"]))
+    return jsonify(ok=True, theme=t)
 
 
 @app.post("/api/me/onboarded")

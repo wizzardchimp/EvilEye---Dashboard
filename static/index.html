@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script>try{if(localStorage.getItem("evileye-theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
-  <link rel="stylesheet" href="/static/style.css?v=50">
+  <link rel="stylesheet" href="/static/style.css?v=52">
 </head>
 <body>
   <header class="topbar">
@@ -332,17 +332,38 @@
             <div><strong>Focuses on your patch.</strong> Pick your regional organised crime unit and every page, chart and live ticker narrows to your area.</div></li>
         </ul>
         <p class="ob-fine">For research purposes only. Dark web addresses are copy-only: this dashboard never opens them.</p>
-        <div class="ob-actions"><button type="button" id="ob-next" class="btn big">Choose your region <span aria-hidden="true">&rarr;</span></button><button type="button" id="ob-skip" class="link">Skip for now</button></div>
+        <div class="ob-actions"><button type="button" id="ob-next" class="btn big">Choose your look <span aria-hidden="true">&rarr;</span></button><button type="button" id="ob-skip" class="link">Skip for now</button></div>
       </div>
       <div id="ob-step2" class="ob-step" hidden>
+        <h2 id="ob-title-theme" class="ob-title">Light or dark?</h2>
+        <p class="ob-sub2">Pick the look that suits where you work. You can change it at any time with the half-filled circle in the header, and your choice follows your account to other devices.</p>
+        <div id="ob-themes" class="ob-themes" role="radiogroup" aria-labelledby="ob-title-theme">
+          <button type="button" role="radio" class="ob-theme" data-pick="dark" aria-checked="true">
+            <span class="ob-pv dark" aria-hidden="true"><span class="pt"><b></b><i></i></span><span class="pr"><i></i><u></u></span><span class="pr"><i></i><u></u></span></span>
+            <span class="tn">Dark</span><span class="td">Easier on the eyes in a dim room or on a late shift.</span>
+          </button>
+          <button type="button" role="radio" class="ob-theme" data-pick="light" aria-checked="false">
+            <span class="ob-pv light" aria-hidden="true"><span class="pt"><b></b><i></i></span><span class="pr"><i></i><u></u></span><span class="pr"><i></i><u></u></span></span>
+            <span class="tn">Light</span><span class="td">Clearer in bright daylight, and when printing or sharing your screen.</span>
+          </button>
+        </div>
+        <div class="ob-actions"><button type="button" id="ob-back2" class="more">&larr; Back</button><button type="button" id="ob-next2" class="btn big">The icons <span aria-hidden="true">&rarr;</span></button><button type="button" id="ob-skipT" class="link">Skip for now</button></div>
+      </div>
+      <div id="ob-step3" class="ob-step" hidden>
+        <h2 id="ob-title-icons" class="ob-title">What the icons mean</h2>
+        <p class="ob-sub2">A quick guide to the buttons and badges you will see around the dashboard.</p>
+        <div id="ob-icons" class="ob-icons"></div>
+        <div class="ob-actions"><button type="button" id="ob-back3" class="more">&larr; Back</button><button type="button" id="ob-next3" class="btn big">Choose your region <span aria-hidden="true">&rarr;</span></button><button type="button" id="ob-skipI" class="link">Skip for now</button></div>
+      </div>
+      <div id="ob-step4" class="ob-step" hidden>
         <h2 id="ob-title2" class="ob-title">Choose your local ROCU region</h2>
         <p class="ob-sub2">A regional organised crime unit (ROCU) covers several police forces. Pick yours and the dashboard, the ticker and your views focus on your area. You can change it at any time from the Region menu.</p>
         <div id="ob-regions" class="ob-regions" role="radiogroup" aria-labelledby="ob-title2"></div>
         <div class="ob-actions"><button type="button" id="ob-back" class="more">&larr; Back</button><button type="button" id="ob-go" class="btn big">Start</button><button type="button" id="ob-skip2" class="link">Skip for now</button></div>
       </div>
-      <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i></div>
+      <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i><i id="ob-dot3"></i><i id="ob-dot4"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=51"></script>
+  <script src="/static/app.js?v=53"></script>
 </body>
 </html>

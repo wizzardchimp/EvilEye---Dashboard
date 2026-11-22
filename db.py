@@ -69,6 +69,7 @@ create table if not exists victim_alloc (
     allocated_at timestamptz not null default now()
 );
 alter table users add column if not exists initials text not null default '';
+alter table users add column if not exists theme text not null default '';
 """
 
 

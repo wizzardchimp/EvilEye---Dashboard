@@ -17,7 +17,7 @@ const sk = (n = 5) => Array.from({ length: n }, () => '<div class="sk"></div>').
 const safeHref = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
 const isDomain = (s) => /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(\/.*)?$/i.test(s || "");
 
-// ------------------------------------------------------------------ theme: dark (default) or inverted light, remembered per browser
+// ------------------------------------------------------------------ theme: dark (default) or inverted light, remembered on this browser and on the account
 const root = document.documentElement;
 function setTheme(t) {
   if (t === "light") root.dataset.theme = "light"; else delete root.dataset.theme;
@@ -25,7 +25,11 @@ function setTheme(t) {
   const b = $("#theme");
   if (b) { b.setAttribute("aria-pressed", String(t === "light")); b.title = t === "light" ? "Switch back to the dark theme" : "Invert colour scheme (light theme)"; }
 }
-$("#theme").addEventListener("click", () => setTheme(root.dataset.theme === "light" ? "dark" : "light"));
+const curTheme = () => (root.dataset.theme === "light" ? "light" : "dark");
+function saveTheme(t) {            // kept on the account so it follows the person to other devices (this browser has it already)
+  if (typeof ME !== "undefined" && ME) { ME.theme = t; api("/api/me/theme", { method: "PUT", body: { theme: t } }).catch(() => { /* still remembered on this device */ }); }
+}
+$("#theme").addEventListener("click", () => { const t = curTheme() === "light" ? "dark" : "light"; setTheme(t); saveTheme(t); });
 setTheme(root.dataset.theme === "light" ? "light" : "dark");
 
 let ME = null;       // { username, role, region, database, regions, prev_visit }
@@ -1017,14 +1021,49 @@ $("#prform").addEventListener("submit", async (e) => {
 // ------------------------------------------------------------------ welcome tour: what EvilEye is, then choose your ROCU region
 const ob = { region: "", data: null, step: 1 };
 const obEl = $("#onboard");
+const OB_STEPS = 4;      // 1 welcome, 2 light or dark, 3 the icons, 4 region
 function showObStep(n) {
   ob.step = n;
-  $("#ob-step1").hidden = n !== 1; $("#ob-step2").hidden = n !== 2;
-  obEl.querySelector(".ob-card").classList.toggle("wide", n === 2);
-  $("#ob-dot1").classList.toggle("on", n === 1); $("#ob-dot2").classList.toggle("on", n === 2);
-  obEl.setAttribute("aria-labelledby", n === 1 ? "ob-title" : "ob-title2");
-  if (n === 2) renderObRegions();
-  setTimeout(() => (n === 1 ? $("#ob-next") : obEl.querySelector('.ob-tile[aria-checked="true"]') || $("#ob-go")).focus(), 30);
+  for (let i = 1; i <= OB_STEPS; i++) { $("#ob-step" + i).hidden = i !== n; $("#ob-dot" + i).classList.toggle("on", i === n); }
+  obEl.querySelector(".ob-card").classList.toggle("wide", n >= 3);
+  obEl.setAttribute("aria-labelledby", ["ob-title", "ob-title-theme", "ob-title-icons", "ob-title2"][n - 1]);
+  if (n === 2) syncObTheme();
+  if (n === 3) renderObIcons();
+  if (n === 4) renderObRegions();
+  setTimeout(() => ({ 1: $("#ob-next"), 2: obEl.querySelector('.ob-theme[aria-checked="true"]'), 3: $("#ob-next3"), 4: obEl.querySelector('.ob-tile[aria-checked="true"]') || $("#ob-go") }[n]).focus(), 30);
+}
+function syncObTheme() {
+  obEl.querySelectorAll(".ob-theme").forEach((b) => { const on = b.dataset.pick === curTheme(); b.setAttribute("aria-checked", String(on)); b.tabIndex = on ? 0 : -1; });
+}
+function pickObTheme(btn) { setTheme(btn.dataset.pick); saveTheme(btn.dataset.pick); syncObTheme(); btn.focus(); }
+$("#ob-themes").addEventListener("click", (e) => { const b = e.target.closest(".ob-theme"); if (b) pickObTheme(b); });
+$("#ob-themes").addEventListener("keydown", (e) => {
+  const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  if (!(e.key in keys)) return;
+  const all = [...obEl.querySelectorAll(".ob-theme")], i = all.indexOf(document.activeElement);
+  if (i < 0) return;
+  e.preventDefault(); pickObTheme(all[(i + keys[e.key] + all.length) % all.length]);
+});
+// the icon guide is built from the real buttons on the page, so it always shows exactly what is on screen
+function renderObIcons() {
+  const live = (sel) => `<span class="ob-ibtn">${document.querySelector(sel).innerHTML}</span>`;
+  const groups = [
+    ["In the header", [
+      [live("#refresh-now"), "Refresh", "Fetches the latest feeds now. The dashboard also refreshes by itself whenever you open it."],
+      [live("#theme"), "Light or dark", "Switches between the light and dark look. Your choice is kept on your account."],
+      [live("#usermenu"), "Account", "Change your password, or show this welcome tour again."],
+      [live('a[href="/logout"]'), "Sign out", "Ends your session. Always do this on a shared computer."],
+    ]],
+    ["On each breach", [
+      [`<span class="ob-ibtn">${ICON_FLAG}</span>`, "Flag or allocate", "Mark a breach as a false positive (not in this region, or not in the UK), or put your initials on it to show you are working on it."],
+      [`<span class="badge alloc">${ICON_PERSON}AB</span>`, "Initials badge", "Someone is working on this breach. The letters are their initials."],
+      [`<span class="badge fp">false positive</span>`, "False positive", "A user flagged it as not belonging here, so it has moved out of the lists. It can be undone."],
+      [`<span class="badge new">NEW</span>`, "New", "First seen since your last visit."],
+      [`<span class="ob-arrow" aria-hidden="true">\u2197</span>`, "Outside link", "Opens another website in a new tab, such as a news story or Companies House."],
+      [`<span class="ob-copy" aria-hidden="true">copy</span>`, "Copy", "Copies a dark web (leak-site) address to your clipboard. This dashboard never opens those addresses."],
+    ]],
+  ];
+  $("#ob-icons").innerHTML = groups.map(([h, rows]) => `<section><h3>${h}</h3><ul class="ob-legend">${rows.map(([ic, name, desc]) => `<li><span class="ic">${ic}</span><div><strong>${name}</strong><span class="d">${desc}</span></div></li>`).join("")}</ul></section>`).join("");
 }
 async function renderObRegions() {
   if (!ob.data) { try { ob.data = await api("/api/regions"); } catch (e) { ob.data = { regions: [], total: 0 }; } }
@@ -1062,10 +1101,13 @@ async function finishOnboarding(skipped) {
   if (!skipped) showTab("overview", true);
 }
 $("#ob-next").addEventListener("click", () => showObStep(2));
-$("#ob-back").addEventListener("click", () => showObStep(1));
+$("#ob-back2").addEventListener("click", () => showObStep(1));
+$("#ob-next2").addEventListener("click", () => showObStep(3));
+$("#ob-back3").addEventListener("click", () => showObStep(2));
+$("#ob-next3").addEventListener("click", () => showObStep(4));
+$("#ob-back").addEventListener("click", () => showObStep(3));
 $("#ob-go").addEventListener("click", () => finishOnboarding(false));
-$("#ob-skip").addEventListener("click", () => finishOnboarding(true));
-$("#ob-skip2").addEventListener("click", () => finishOnboarding(true));
+["#ob-skip", "#ob-skipT", "#ob-skipI", "#ob-skip2"].forEach((id) => $(id).addEventListener("click", () => finishOnboarding(true)));
 
 // ------------------------------------------------------------------ account
 $("#usermenu").addEventListener("click", () => {
@@ -1079,7 +1121,7 @@ $("#usermenu").addEventListener("click", () => {
       <label class="field">Repeat new password<input id="pw-rep" class="search" type="password" minlength="10" required autocomplete="new-password"></label>
       <button class="btn" type="submit">Change password</button></form><p id="mypw-msg" class="hint"></p>`
     : '<p class="hint">The user database is not connected, so accounts and passwords are unavailable. Set DATABASE_URL.</p>';
-  $("#modal-body").insertAdjacentHTML("beforeend", '<p style="margin-top:14px"><button type="button" class="more" id="show-welcome">Show the welcome screen</button></p>');
+  $("#modal-body").insertAdjacentHTML("beforeend", '<p style="margin-top:14px"><button type="button" class="more" id="show-welcome">Show the welcome tour (look, icon guide, region)</button></p>');
   $("#show-welcome").addEventListener("click", () => { closeModal(); startOnboarding(); });
   const f = $("#mypw");
   if (f) f.addEventListener("submit", async (e) => {
@@ -1192,6 +1234,7 @@ $("#refresh-now").addEventListener("click", async () => {
 
 async function init() {
   try { ME = await api("/api/me"); } catch (e) { return; }
+  if (ME.theme && ME.theme !== curTheme()) setTheme(ME.theme);      // the look chosen on the account wins over this browser's last setting
   if (ME.must_change) { showPwReq(); return; }        // nothing else works until the password has been changed
   const h = readHash();
   region = ME.region || "";
