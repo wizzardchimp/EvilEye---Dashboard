@@ -750,7 +750,7 @@ def current_user():
 @app.before_request
 def guard():
     p = request.path
-    if p in ("/login", "/healthz", "/favicon.ico") or p.startswith("/static/"):
+    if p in ("/login", "/healthz", "/healthz/ip", "/favicon.ico") or p.startswith("/static/"):
         return None
     user = current_user()
     if not user:
@@ -880,6 +880,12 @@ def logout():
 @app.get("/healthz")
 def healthz():
     return "ok"
+
+
+@app.get("/healthz/ip")      # TEMPORARY diagnostic, removed again right after use: what the server sees of the caller's own request
+def healthz_ip():
+    h = request.headers
+    return jsonify(used=_ip(), x_real_ip=h.get("X-Real-IP"), x_forwarded_for=h.get("X-Forwarded-For"), remote_addr=request.remote_addr, edge=h.get("X-Railway-Edge"))
 
 
 @app.get("/")
