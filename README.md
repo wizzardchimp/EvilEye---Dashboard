@@ -40,8 +40,8 @@ region filter). Click a row, or any entry in the Overview "Latest" lists, for th
 you open the page more than 30 minutes after the last one).
 
 ## Breach details
-Clicking a breach (a row in UK Victims, or anywhere on an entry in the Overview "Latest" lists except its name link and flag
-button) opens a details panel:
+Clicking a breach (a row in UK Victims, or anywhere on an entry in the Overview "Latest" lists (its name included) opens a details
+panel:
 
 - **Original site**: the company's own web address when the post gives one (otherwise "Not given in the post").
 - **Published**: the date on the leak post. **First seen**: when the dashboard's feeds picked it up.
@@ -96,10 +96,9 @@ user's preference, which drives the "Latest in <region>" ticker. Alerts & News a
 
 **Latest UK incidents / Latest in <region>** show the five newest victims each. **View more** expands a list to 25, then
 **Show 25 more** adds 25 at a time (a height-capped, scrollable list; **Show fewer** collapses it). Each entry shows the
-group, sector and age on the left and the victim's area (town or district, when known) in a box on the right. The company
-name links to its own website when the source data gives a usable web address (opens in a new tab; never a leak-site
-address), and those clicks are recorded in the activity log as "latest incidents". `/api/ticker?uk=N&reg=N` returns up to
-1,500 per list.
+group, sector and age on the left and the victim's area (town or district, when known) in a box on the right. Click an entry
+(its name included) to open the breach details, where the company's own website is linked as "Original site". Entries carry no
+outside links of their own. `/api/ticker?uk=N&reg=N` returns up to 1,500 per list.
 
 ## Flags and allocation
 Every victim (in the Overview tickers, the UK Victims table and the details drawer) has a flag button. Any signed-in user can:

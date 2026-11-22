@@ -583,10 +583,8 @@ select.search { flex: 0 1 210px; }
 
 /* ticker entries: name + meta on the left, the area in a box on the right; View more footer */
 .tk-main { min-width: 0; flex: 1 1 auto; }
-.tk-name { color: inherit; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; text-decoration-thickness: 1px; }
-.tk-name::after { content: "\2197"; font-size: 10px; margin-left: 3px; color: var(--muted); }
-.tk-name:hover, .tk-name:focus-visible { color: var(--link); text-decoration-style: solid; text-decoration-color: currentColor; }
-.tk-name:hover::after, .tk-name:focus-visible::after { color: var(--link); }
+.tk-name { color: inherit; }
+.tk-open:hover .tk-name, .tk-open:focus-visible .tk-name { color: var(--link); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 .tk-area { flex: 0 1 auto; align-self: center; max-width: 44%; text-align: center; font-size: 12px; line-height: 1.25; color: var(--text-2);
   background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 7px; padding: 4px 9px; overflow-wrap: break-word; }
 .ticker-list.expanded { max-height: 540px; overflow-y: auto; padding-right: 8px; }

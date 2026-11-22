@@ -161,8 +161,7 @@ function siteHref(site) {
 function tickerItem(x, showRegion, fresh, list, i) {
   const meta = [`<span class="badge grp">${esc(x.group)}</span>`, esc(sectorShort(x.sector)), ago(x.seen)].filter(Boolean).join(" · ");
   const reg = showRegion ? `<span class="badge ${x.rocu === "Unplaced" ? "src" : "uk"}">${esc(x.rocu === "Unplaced" ? "region unknown" : x.rocu)}</span>` : "";
-  const href = siteHref(x.website);
-  const name = href ? `<a class="tk-name" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(href.slice(8))} (opens in a new tab)">${esc(x.title)}</a>` : esc(x.title);
+  const name = `<span class="tk-name">${esc(x.title)}</span>`;          // opens the breach summary; the company's site is linked from there
   const area = x.town && placed(x) ? `<span class="tk-area">${esc(x.town)}</span>` : "";
   const mk = marks(x), fb = flagBtn(`tk:${list}:${i}`, x);
   return `<li class="tk-open${fresh ? " fresh" : ""}" data-ti="${list}:${i}" tabindex="0"><div class="tk-main"><div class="tk-title">${name} ${reg}${x.new ? ' <span class="badge new">NEW</span>' : ""}${mk ? " " + mk : ""}</div><div class="meta">${meta}</div></div>${area || fb ? `<div class="tk-side">${area}${fb}</div>` : ""}</li>`;
