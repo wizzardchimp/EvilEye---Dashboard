@@ -39,6 +39,11 @@ company with its town or district in brackets, sorts by any column, pages 50 at 
 region filter). Click a row, or any entry in the Overview "Latest" lists, for the breach details (see below). "New" badges mark victims first seen since your previous visit (a visit starts when
 you open the page more than 30 minutes after the last one).
 
+## Phones
+At 640px wide and below (the phone layout) all text is 15% larger: every font size in `style.css` is written as `size * var(--fs)`,
+and `--fs` is 1 normally and 1.15 under 640px. Wider screens are unchanged. Grids now shrink to the screen on very narrow phones
+(320 to 360px) instead of making the page scroll sideways.
+
 ## Breach details
 Clicking a breach (a row in UK Victims, or anywhere on an entry in the Overview "Latest" lists (its name included) opens a details
 panel:
@@ -48,6 +53,14 @@ panel:
 - **Gang**, **Data** and **Ransom**. The data amount is the feed's own size when it is a clean figure ("as stated by the
   gang"), otherwise a size quoted in the post text ("quoted in the post text"); about 14% of breaches have either, and the
   rest say "Not stated in the post" rather than guessing. A ransom figure is shown exactly as posted.
+- **Company (Companies House)**: the company as the register holds it: registered name and number, status and type, date
+  of incorporation, the **registered office address**, the **current directors** (names and appointment dates only; resigned
+  directors, secretaries, birth dates and home addresses are left out), and links to the company's gov.uk page and its officers
+  page. It says how the company was matched to the breach (by name, or by name and website) and offers a Companies House search
+  in case it is the wrong one. A breach already placed through the register uses its stored company number; otherwise the
+  register is searched with the same matching rules as placement. It is read when a summary is opened (never in the background)
+  and kept in `DATA_DIR/ch_company.json` for 7 days (a "no match" for 1 day); a rejected key or a busy register is reported and
+  never kept. Needs `COMPANIES_HOUSE_KEY`; without it the section says lookup is not set up. `GET /api/victims/company?title=...`.
 - **Gang responsible**: aliases, a short description, how many UK victims are on record, known leak sites (and how many are
   online), when it was first tracked, and a button to find it in the Gang Catalog.
 - **Where this was sourced from**: ransomware.live (the victim tracker the breach is read from, linked to that gang's page),
@@ -142,8 +155,8 @@ Without `DATABASE_URL` the app runs in legacy mode: one shared password (`EVILEY
 | `EVILEYE_PASSWORD` | First-admin password (and the shared password in legacy mode). |
 | `EVILEYE_ADMIN_USER` | Optional, default `admin`. Name of the first admin. |
 | `SECRET_KEY` | Required in production. Long random string for session cookies. |
-| `DATA_DIR` | Default `./data`. Use a Railway volume (e.g. `/data`) to keep the feed snapshot and region cache. |
-| `COMPANIES_HOUSE_KEY` | Optional. Region lookups by company name. REST key, used server-side only. |
+| `DATA_DIR` | Default `./data`. Use a Railway volume (e.g. `/data`) to keep the feed snapshot, region cache and Companies House cache. |
+| `COMPANIES_HOUSE_KEY` | Optional. Region lookups by company name, and the company details (registered office, directors) in the breach summary. REST key, used server-side only. |
 | `STALE_MINUTES` | Optional, default 30. Page-open refresh only if data is older. |
 | `GEO_BUDGET` | Optional, default 400. API lookups per refresh. |
 

@@ -296,13 +296,14 @@ def _ch_search(q):
     return r
 
 
-def resolve_company(name, website="", strict=False):
-    """Companies House: name (and website domain) -> registered-office postcode -> force. Needs a key.
-    strict=True (for victims whose description only names a foreign country) accepts a match only when the website
-    domain also agrees with the company name."""
+def find_company(name, website="", strict=False):
+    """Companies House search: the best-matching company for a victim name (and website domain). Returns
+    {"status": "found", "item": <search result>, "confidence": "name" | "name+domain"}, or {"status": ...} with
+    no-match / auth-error / rate-limited / error. strict=True (for victims whose description only names a foreign
+    country) accepts a match only when the website domain also agrees with the company name."""
     label = domain_label(website)
     queries = name_variants(name) or [name]
-    best, best_key = None, (-1, -1, -1.0)
+    best, best_key, best_conf = None, (-1, -1, -1.0), ""
     for i, q in enumerate(queries):
         try:
             r = _ch_search(q)
@@ -327,10 +328,75 @@ def resolve_company(name, website="", strict=False):
             time.sleep(0.55)
     if not best:
         return {"status": "no-match"}
+    return {"status": "found", "item": best, "confidence": best_conf}
+
+
+def resolve_company(name, website="", strict=False):
+    """Companies House: name (and website domain) -> registered-office postcode -> force. Needs a key."""
+    f = find_company(name, website, strict)
+    if f["status"] != "found":
+        return {"status": f["status"]}
+    best = f["item"]
     rec = resolve_postcode(best["address"]["postal_code"])
     rec["company"] = best.get("title")
-    rec["confidence"] = best_conf
+    rec["confidence"] = f["confidence"]
+    rec["number"] = best.get("company_number") or ""          # kept so the breach summary can link straight to the register entry
     return rec
+
+
+_DIRECTOR_ROLES = ("director", "corporate-director", "nominee-director", "corporate-nominee-director")
+
+
+def _ch_api(path, params=None):
+    return requests.get("https://api.company-information.service.gov.uk" + path, params=params,
+                        auth=(CH_KEY or "proxy-injected", ""), headers=UA, timeout=25)
+
+
+def _ch_fail(r):
+    """A Companies House response -> our status word, or None when the call worked."""
+    if r.status_code == 429:
+        return "rate-limited"
+    if r.status_code in (401, 403):
+        return "auth-error"
+    if r.status_code == 404:
+        return "no-match"
+    return None if r.ok else "error"
+
+
+def _forename_first(name):
+    """'SMITH, John Andrew' -> 'John Andrew SMITH' (the register's own capitalisation is kept)."""
+    if "," in name:
+        sur, fore = name.split(",", 1)
+        return f"{fore.strip()} {sur.strip()}".strip()
+    return name.strip()
+
+
+def company_details(number):
+    """Registered details and current directors for a company number, as the register holds them. Returns
+    {"status": "ok", "company": {...}, "officers": [...] or None (not available)} or {"status": <failure word>}.
+    Only names, roles and appointment dates of current directors are kept: no birth dates or home addresses."""
+    try:
+        p = _ch_api(f"/company/{number}")
+        bad = _ch_fail(p)
+        if bad:
+            return {"status": bad}
+        prof = p.json()
+        officers = None
+        o = _ch_api(f"/company/{number}/officers", {"items_per_page": 100})
+        if o.status_code in (429, 401, 403):
+            return {"status": _ch_fail(o)}
+        if o.ok:
+            officers = [{"name": _forename_first(it.get("name") or ""), "role": it.get("officer_role"), "appointed": it.get("appointed_on") or ""}
+                        for it in o.json().get("items", []) if not it.get("resigned_on") and it.get("officer_role") in _DIRECTOR_ROLES]
+            officers.sort(key=lambda x: x["appointed"] or "9999")
+    except Exception:
+        return {"status": "error"}
+    a = prof.get("registered_office_address") or {}
+    parts = [a.get(k) for k in ("care_of", "po_box", "premises", "address_line_1", "address_line_2", "locality", "region", "postal_code", "country")]
+    return {"status": "ok", "officers": officers,
+            "company": {"name": prof.get("company_name") or "", "number": prof.get("company_number") or number, "status": prof.get("company_status") or "",
+                        "type": prof.get("type") or "", "created": prof.get("date_of_creation") or "",
+                        "address": ", ".join(str(x).strip() for x in parts if x and str(x).strip())}}
 
 
 STATUS = {"auth_error": False, "rate_limited": False, "last_run": None, "tried": 0, "placed": 0, "no_match": 0, "errors": 0}

@@ -453,6 +453,34 @@ function gangHtml(ctx) {
     <p class="br-gd${g.description ? "" : " meta"}">${esc(g.description || "No description on file for this group.")}</p>
     <button type="button" class="more" data-gang-go="${esc(g.name)}">Show in Gang Catalog</button></div>`;
 }
+const CO_TYPE = { ltd: "Private limited company", plc: "Public limited company", llp: "Limited liability partnership", "private-unlimited": "Private unlimited company", "private-limited-guarant-nsc": "Private company limited by guarantee" };
+const humanize = (s) => String(s || "").replace(/[-_]/g, " ").replace(/^./, (c) => c.toUpperCase());
+function companyHtml(c) {
+  if (!c) return '<div class="ldr">Looking up Companies House…</div>';
+  const search = c.search_url ? ` ${outLink(c.search_url, "Search Companies House")}` : "";
+  if (c.status !== "ok") {
+    const msg = { no_match: "No company on the Companies House register matched this breach's name.", disabled: "Companies House lookup is not set up on this site (it needs a Companies House API key).",
+      auth_error: "Companies House rejected this site's API key, so company details cannot be shown.", rate_limited: "Companies House is busy. Open this breach again in a minute." }[c.status] || "Could not load the Companies House details.";
+    return `<div class="ldr">${esc(msg)}${search}</div>`;
+  }
+  const co = c.company, offs = c.officers;
+  const dirs = offs === null ? '<span class="meta">Not available from Companies House.</span>'
+    : !offs.length ? '<span class="meta">No current directors listed.</span>'
+    : `<ul class="br-dir">${offs.slice(0, 12).map((o) => `<li>${esc(o.name)}${o.role !== "director" ? ` <span class="meta">${esc(humanize(o.role).toLowerCase())}</span>` : ""}${o.appointed ? ` <span class="meta">appointed ${esc(fmtDate(o.appointed))}</span>` : ""}</li>`).join("")}${offs.length > 12 ? `<li class="meta">and ${offs.length - 12} more, on the Companies House officers page</li>` : ""}</ul>`;
+  return `<dl class="dl">
+      <dt>Registered as</dt><dd><strong>${esc(co.name)}</strong> <span class="meta">No. ${esc(co.number)}</span></dd>
+      <dt>Status</dt><dd>${esc(humanize(co.status))}${co.type ? ` · ${esc(CO_TYPE[co.type] || humanize(co.type))}` : ""}${co.created ? ` <span class="meta">incorporated ${esc(fmtDate(co.created))}</span>` : ""}</dd>
+      <dt>Registered office</dt><dd>${esc(co.address || "Not given")}</dd>
+      <dt>Directors</dt><dd>${dirs}</dd></dl>
+    <div class="br-cofoot">${outLink(c.url, "View on Companies House")} · ${outLink(c.officers_url, "All officers")}
+      <div class="meta">According to Companies House, matched to this breach by ${c.matched_by === "name+domain" ? "company name and website" : "company name"}, checked ${esc(ago(c.fetched))}. Not the right company?${search}</div></div>`;
+}
+async function loadCompany(v) {
+  let c;
+  try { c = await api(`/api/victims/company?title=${encodeURIComponent(v.post_title)}`); } catch (e) { c = { status: "error" }; }
+  if (drawer.hidden || !drawerVictim || drawerVictim.post_title !== v.post_title) return;
+  if ($("#br-co")) $("#br-co").innerHTML = companyHtml(c);
+}
 const MENTION_KIND = { press: "Press mention", "leak-post": "Listed on RansomLook" };
 function sourcesHtml(v, ctx) {
   const g = ctx && ctx.gang, rows = [], list = (ctx && ctx.mentions) || [];
@@ -495,6 +523,7 @@ function openVictim(v, quiet = false) {
       ${v.ransom ? `<dt>Ransom</dt><dd>${esc(v.ransom)} <span class="meta">as posted</span></dd>` : ""}
       ${v.reposts ? `<dt>Re-posted</dt><dd>${v.reposts} more time${v.reposts === 1 ? "" : "s"} by the same group</dd>` : ""}
     </dl>
+    <div><div class="sect">Company (Companies House)</div><div id="br-co">${companyHtml(null)}</div></div>
     <div><div class="sect">Gang responsible</div><div id="br-gang">${gangHtml(null)}</div></div>
     <div><div class="sect">Where this was sourced from</div><div id="br-src">${sourcesHtml(v, null)}</div></div>
     <div><div class="sect">Region</div><dl class="dl">
@@ -512,7 +541,7 @@ function openVictim(v, quiet = false) {
         ${v.manual ? '<button class="more danger" type="button" id="pl-clear">Remove manual placement</button>' : ""}
       </form><p id="pl-msg" class="hint"></p></div>` : ""}`;
   drawer.hidden = false; backdrop.hidden = false;
-  loadBreachExtras(v);
+  loadBreachExtras(v); loadCompany(v);
   const done = () => { closeDrawer(); loadVictims(); loadTicker(); toast("Region updated"); };
   $("#plform")?.addEventListener("submit", async (ev) => {
     ev.preventDefault();

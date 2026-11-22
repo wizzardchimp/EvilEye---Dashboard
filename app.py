@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from functools import wraps
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import requests
 from flask import Flask, Response, g, jsonify, redirect, request, send_file, send_from_directory, session
@@ -1272,6 +1272,68 @@ def _mentions(v, limit=8):
     for n in STATE["news"]:
         consider(n.get("title"), n.get("summary"), n.get("url"), n.get("published"), n.get("source_name") or n.get("source") or "", "news")
     return sorted(out, key=lambda m: m["date"], reverse=True)[:limit]
+
+
+# ---- the company, as the Companies House register holds it (read when a summary is opened, then kept for a while)
+CH_URL = "https://find-and-update.company-information.service.gov.uk"
+CH_CACHE_FILE = DATA_DIR / "ch_company.json"
+_CH_TTL = {"ok": 7 * 86400, "no_match": 86400}                  # failures (rejected key, busy, errors) are never kept
+_CH_STATUS = {"auth-error": "auth_error", "rate-limited": "rate_limited", "no-match": "no_match", "error": "error"}
+_ch_lock = threading.Lock()
+try:
+    _CH_CACHE = json.loads(CH_CACHE_FILE.read_text())
+except Exception:
+    _CH_CACHE = {}
+
+
+def _ch_cached(key):
+    e = _CH_CACHE.get(key)
+    t = _ts(e.get("fetched")) if e else None
+    return e if t and (datetime.now(timezone.utc) - t).total_seconds() < _CH_TTL.get(e.get("status"), 0) else None
+
+
+def _ch_store(key, entry):
+    entry["fetched"] = _now_iso()
+    with _ch_lock:
+        _CH_CACHE[key] = entry
+        try:
+            CH_CACHE_FILE.write_text(json.dumps(_CH_CACHE))
+        except Exception:
+            pass
+    return entry
+
+
+@app.get("/api/victims/company")
+def victim_company():
+    v = _find_victim(request.args.get("title"))
+    if not v:
+        return jsonify(error="Unknown victim."), 404
+    search_url = f"{CH_URL}/search?q=" + quote(v["post_title"])
+    if not geo.CH_ENABLED:
+        return jsonify(status="disabled", search_url=search_url)
+    hit = _ch_cached(v["key"])
+    if hit:
+        return jsonify(dict(hit, search_url=search_url))
+    g_ = GEO.get(v["key"]) or {}
+    number, matched = (g_["number"], g_.get("confidence") or "name") if g_.get("source") == "companies-house" and g_.get("number") else ("", "")
+    if not number:                                    # not placed through the register: search it now, with the same matching rules
+        f = geo.find_company(v["post_title"], v.get("website", ""), strict=bool(v.get("text_overseas")))
+        if f["status"] != "found":
+            out = {"status": _CH_STATUS.get(f["status"], "error")}
+            if out["status"] == "no_match":
+                out = _ch_store(v["key"], out)
+            return jsonify(dict(out, search_url=search_url))
+        number, matched = f["item"].get("company_number") or "", f["confidence"]
+    number = number.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{6,10}", number):         # only ever build a register address from a well-formed number
+        return jsonify(status="error", search_url=search_url)
+    d = geo.company_details(number)
+    if d["status"] != "ok":
+        return jsonify(status=_CH_STATUS.get(d["status"], "error"), search_url=search_url)
+    out = _ch_store(v["key"], {"status": "ok", "matched_by": matched, "company": d["company"],
+                               "officers": d["officers"][:60] if d["officers"] is not None else None,
+                               "url": f"{CH_URL}/company/{number}", "officers_url": f"{CH_URL}/company/{number}/officers"})
+    return jsonify(dict(out, search_url=search_url))
 
 
 @app.get("/api/victims/context")
