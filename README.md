@@ -46,14 +46,18 @@ and `--fs` is 1 normally and 1.15 under 640px. Wider screens are unchanged. Grid
 
 ## Breach details
 Clicking a breach (a row in UK Victims, or anywhere on an entry in the Overview "Latest" lists (its name included) opens a details
-panel:
+panel. It slides in from the right, 780px wide on a desktop (the page stays visible behind it; the full width of a phone), under a
+large title with the gang, sector and region badges and the Flag or allocate button. Below that, **each topic is its own bordered card**
+with an icon and a 16px title on a tinted band, and the facts inside are laid out two to a row (one on a phone) with the label above the value,
+so a long breach reads as a handful of short sections rather than one column of text. The panel scrolls, opening another breach starts at the
+top, and flagging or allocating a breach refreshes it in place without losing your place. In order:
 
-- **Original site**: the company's own web address when the post gives one (otherwise "Not given in the post").
-- **Published**: the date on the leak post. **First seen**: when the dashboard's feeds picked it up.
-- **Gang**, **Data** and **Ransom**. The data amount is the feed's own size when it is a clean figure ("as stated by the
+- **Breach details**: **Original site**, the company's own web address when the post gives one (otherwise "Not given in the post");
+  **Published**, the date on the leak post; **First seen**, when the dashboard's feeds picked it up; **Data**; and **Ransom** and **Re-posted**
+  when there are any. (The gang is in the badges at the top and in its own card.) The data amount is the feed's own size when it is a clean figure ("as stated by the
   gang"), otherwise a size quoted in the post text ("quoted in the post text"); about 14% of breaches have either, and the
   rest say "Not stated in the post" rather than guessing. A ransom figure is shown exactly as posted.
-- **Company (Companies House)**: the company as the register holds it: registered name and number, status and type, date
+- **Company (Companies House)** (card): the company as the register holds it: registered name and number, status and type, date
   of incorporation, the **registered office address**, the **current directors** (names and appointment dates only; resigned
   directors, secretaries, birth dates and home addresses are left out), and links to the company's gov.uk page and its officers
   page. It says how the company was matched to the breach (by name, or by name and website) and offers a Companies House search
@@ -61,13 +65,15 @@ panel:
   register is searched with the same matching rules as placement. It is read when a summary is opened (never in the background)
   and kept in `DATA_DIR/ch_company.json` for 7 days (a "no match" for 1 day); a rejected key or a busy register is reported and
   never kept. Needs `COMPANIES_HOUSE_KEY`; without it the section says lookup is not set up. `GET /api/victims/company?title=...`.
-- **Gang responsible**: aliases, a short description, how many UK victims are on record, known leak sites (and how many are
+- **Gang responsible** (card): aliases, a short description, how many UK victims are on record, known leak sites (and how many are
   online), when it was first tracked, and a button to find it in the Gang Catalog.
-- **Where this was sourced from**: ransomware.live (the victim tracker the breach is read from, linked to that gang's page),
+- **Where this was sourced from** (card): ransomware.live (the victim tracker the breach is read from, linked to that gang's page),
   RansomLook when it also tracks the gang, the gang's own leak-site post, and any other mention in the dashboard's own alert
   and news feeds. Mentions are matched on the whole company name and must fall within 30 days of the post, and names too short
   or generic to match safely are skipped, so a listed mention is never a guess. The leak-site address is **copy only**: it is
   never opened from the dashboard. The extras load from `GET /api/victims/context?title=...`.
+- **Region**: where it was placed and the basis (see Regions (ROCU)), then **Description** (from ransomware.live) and, for admins only, a
+  dashed **Admin: set region** card with the manual placement form.
 - **Region** (and how it was decided), the description, flags and allocation, and the admin region editor.
 
 ## Regions (ROCU)

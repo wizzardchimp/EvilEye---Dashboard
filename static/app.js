@@ -444,6 +444,22 @@ $("#victim-rows").addEventListener("keydown", (e) => { if (e.key === "Enter" && 
 // ------------------------------------------------------------------ victim details drawer
 const drawer = $("#drawer"), backdrop = $("#drawer-backdrop");
 function closeDrawer() { drawer.hidden = true; backdrop.hidden = true; }
+const svgI = (d) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const SEC_ICON = {
+  details: svgI('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>'),
+  company: svgI('<path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M2 21h20"/><path d="M8 8h2M8 12h2M8 16h2"/>'),
+  gang: svgI('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.3c2.3.7 3.5 2.6 3.5 5.7"/>'),
+  sources: svgI('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
+  region: svgI('<path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>'),
+  description: svgI('<path d="M4 6h16M4 10h16M4 14h10M4 18h13"/>'),
+  admin: svgI('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'),
+};
+// One clearly bordered card per topic: an icon and a title on a tinted band, then the content.
+const sect = (key, title, body, cls = "") => `<section class="dsec ${cls}" data-sec="${key}" aria-labelledby="ds-${key}">
+    <header class="dsec-h"><span class="dsec-i">${SEC_ICON[key]}</span><h3 id="ds-${key}">${esc(title)}</h3></header>
+    <div class="dsec-b">${body}</div></section>`;
+// A label above its value; "wide" facts take the whole row.
+const fact = (label, value, wide = false) => `<div class="fact${wide ? " wide" : ""}"><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
 const fmtPub = (iso) => (/T00:00:00/.test(iso || "") ? fmtDate(iso) : fmtTime(iso));      // posts often carry a date with no time
 const srcRow = (badge, body, meta) => `<li><span class="badge src">${esc(badge)}</span><div class="br-sl">${body}${meta ? `<div class="meta">${meta}</div>` : ""}</div></li>`;
 const outLink = (url, text) => `<a href="${esc(safeHref(url))}" target="_blank" rel="noopener noreferrer">${esc(text)} ↗</a>`;
@@ -471,11 +487,11 @@ function companyHtml(c) {
   const dirs = offs === null ? '<span class="meta">Not available from Companies House.</span>'
     : !offs.length ? '<span class="meta">No current directors listed.</span>'
     : `<ul class="br-dir">${offs.slice(0, 12).map((o) => `<li>${esc(o.name)}${o.role !== "director" ? ` <span class="meta">${esc(humanize(o.role).toLowerCase())}</span>` : ""}${o.appointed ? ` <span class="meta">appointed ${esc(fmtDate(o.appointed))}</span>` : ""}</li>`).join("")}${offs.length > 12 ? `<li class="meta">and ${offs.length - 12} more, on the Companies House officers page</li>` : ""}</ul>`;
-  return `<dl class="dl">
-      <dt>Registered as</dt><dd><strong>${esc(co.name)}</strong> <span class="meta">No. ${esc(co.number)}</span></dd>
-      <dt>Status</dt><dd>${esc(humanize(co.status))}${co.type ? ` · ${esc(CO_TYPE[co.type] || humanize(co.type))}` : ""}${co.created ? ` <span class="meta">incorporated ${esc(fmtDate(co.created))}</span>` : ""}</dd>
-      <dt>Registered office</dt><dd>${esc(co.address || "Not given")}</dd>
-      <dt>Directors</dt><dd>${dirs}</dd></dl>
+  return `<dl class="facts">
+      ${fact("Registered as", `<strong>${esc(co.name)}</strong> <span class="meta">No. ${esc(co.number)}</span>`)}
+      ${fact("Status", `${esc(humanize(co.status))}${co.type ? ` · ${esc(CO_TYPE[co.type] || humanize(co.type))}` : ""}${co.created ? ` <span class="meta">incorporated ${esc(fmtDate(co.created))}</span>` : ""}`)}
+      ${fact("Registered office", esc(co.address || "Not given"), true)}
+      ${fact("Directors", dirs, true)}</dl>
     <div class="br-cofoot">${outLink(c.url, "View on Companies House")} · ${outLink(c.officers_url, "All officers")}
       <div class="meta">According to Companies House, matched to this breach by ${c.matched_by === "name+domain" ? "company name and website" : "company name"}, checked ${esc(ago(c.fetched))}. Not the right company?${search}</div></div>`;
 }
@@ -508,6 +524,8 @@ const BASIS = { text: "a place name in its description", postcode: "a postcode i
   manual: "set manually by an admin" };
 function openVictim(v, quiet = false) {
   if (!quiet) track("victim_view", v.post_title);
+  const same = quiet && !drawer.hidden && drawerVictim && drawerVictim.post_title === v.post_title;      // a refresh of the breach already on screen
+  const prev = same ? { scroll: $("#dr-body").scrollTop, co: $("#br-co")?.innerHTML, gang: $("#br-gang")?.innerHTML, src: $("#br-src")?.innerHTML } : {};
   drawerVictim = v;
   $("#dr-title").innerHTML = `${esc(v.post_title)}${townLabel(v)}`;
   const basis = v.region_source === "flag" ? v.why
@@ -515,36 +533,38 @@ function openVictim(v, quiet = false) {
     : v.region_source ? `Placed using ${BASIS[v.region_source] || v.region_source}.`
     : (v.why || "Not placed yet: no postcode, place name or Companies House match.");
   const canEdit = ME.role === "admin" && ME.database;
+  const where = `${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) && v.town !== v.force_name ? ` · ${esc(v.town)}` : ""}`;
   $("#dr-body").innerHTML = `
-    <div>${newBadge(v).trim()} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
-    ${ME.database ? `<div class="dr-actions">${marks(v)}<button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate</button></div>` : ""}
-    <dl class="dl">
-      <dt>Original site</dt><dd>${siteHref(v.website) ? outLink(siteHref(v.website), siteHref(v.website).slice(8)) : '<span class="meta">Not given in the post</span>'}</dd>
-      <dt>Published</dt><dd>${esc(fmtPub(v.discovered))} <span class="meta">the date on the leak post</span></dd>
-      <dt>First seen</dt><dd>${esc(fmtTime(v.seen || v.discovered))} <span class="meta">${esc(ago(v.seen || v.discovered))}, when the dashboard's feeds picked it up</span></dd>
-      <dt>Gang</dt><dd><strong>${esc(v.group)}</strong></dd>
-      <dt>Data</dt><dd>${v.data ? `${esc(v.data)} <span class="meta">${v.data_basis === "stated" ? "as stated by the gang" : "quoted in the post text"}</span>` : '<span class="meta">Not stated in the post</span>'}</dd>
-      ${v.ransom ? `<dt>Ransom</dt><dd>${esc(v.ransom)} <span class="meta">as posted</span></dd>` : ""}
-      ${v.reposts ? `<dt>Re-posted</dt><dd>${v.reposts} more time${v.reposts === 1 ? "" : "s"} by the same group</dd>` : ""}
-    </dl>
-    <div><div class="sect">Company (Companies House)</div><div id="br-co">${companyHtml(null)}</div></div>
-    <div><div class="sect">Gang responsible</div><div id="br-gang">${gangHtml(null)}</div></div>
-    <div><div class="sect">Where this was sourced from</div><div id="br-src">${sourcesHtml(v, null)}</div></div>
-    <div><div class="sect">Region</div><dl class="dl">
-      <dt>Region</dt><dd>${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) && v.town !== v.force_name ? ` · ${esc(v.town)}` : ""}</dd>
-      <dt>Basis</dt><dd>${esc(basis)}${v.region_source && v.region_source !== "flag" && v.why ? ` ${esc(v.why)}` : ""}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}</dd>
-      ${v.registered_name ? `<dt>Registered as</dt><dd>${esc(v.registered_name)}</dd>` : ""}
-    </dl></div>
-    ${v.description ? `<div><div class="sect">Description (from ransomware.live)</div><div class="desc">${esc(v.description)}</div></div>` : ""}
-    ${canEdit ? `<div><div class="sect">Admin: set region</div>
-      <form id="plform" class="form-row">
+    <div class="dsum">
+      <div class="dsum-b">${newBadge(v).trim()} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
+      ${ME.database ? `<div class="dr-actions">${marks(v)}<button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate</button></div>` : ""}
+    </div>
+    ${sect("details", "Breach details", `<dl class="facts">
+      ${fact("Original site", siteHref(v.website) ? outLink(siteHref(v.website), siteHref(v.website).slice(8)) : '<span class="meta">Not given in the post</span>')}
+      ${fact("Published", `${esc(fmtPub(v.discovered))} <span class="meta">the date on the leak post</span>`)}
+      ${fact("First seen", `${esc(fmtTime(v.seen || v.discovered))} <span class="meta">${esc(ago(v.seen || v.discovered))}, when the dashboard's feeds picked it up</span>`)}
+      ${fact("Data", v.data ? `${esc(v.data)} <span class="meta">${v.data_basis === "stated" ? "as stated by the gang" : "quoted in the post text"}</span>` : '<span class="meta">Not stated in the post</span>')}
+      ${v.ransom ? fact("Ransom", `${esc(v.ransom)} <span class="meta">as posted</span>`) : ""}
+      ${v.reposts ? fact("Re-posted", `${v.reposts} more time${v.reposts === 1 ? "" : "s"} <span class="meta">by the same group</span>`) : ""}
+    </dl>`)}
+    ${sect("company", "Company (Companies House)", `<div id="br-co">${prev.co ?? companyHtml(null)}</div>`)}
+    ${sect("gang", "Gang responsible", `<div id="br-gang">${prev.gang ?? gangHtml(null)}</div>`)}
+    ${sect("sources", "Where this was sourced from", `<div id="br-src">${prev.src ?? sourcesHtml(v, null)}</div>`)}
+    ${sect("region", "Region", `<dl class="facts">
+      ${fact("Region", where)}
+      ${v.registered_name ? fact("Registered as", esc(v.registered_name)) : ""}
+      ${fact("Basis", `${esc(basis)}${v.region_source && v.region_source !== "flag" && v.why ? ` ${esc(v.why)}` : ""}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}`, true)}
+    </dl>`)}
+    ${v.description ? sect("description", "Description (from ransomware.live)", `<div class="desc">${esc(v.description)}</div>`) : ""}
+    ${canEdit ? sect("admin", "Admin: set region", `<form id="plform" class="form-row">
         <label class="field">Region<select id="pl-rocu" class="search">${ME.regions.filter((r) => r !== "Unplaced").map((r) => `<option ${r === v.rocu ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
         <label class="field">Town / district<input id="pl-town" class="search" maxlength="60" value="${esc(v.manual ? v.town : "")}" placeholder="optional"></label>
         <label class="field">Note<input id="pl-note" class="search" maxlength="200" value="${esc(v.override_note || "")}" placeholder="optional"></label>
-        <button class="btn" type="submit">Save</button>
-        ${v.manual ? '<button class="more danger" type="button" id="pl-clear">Remove manual placement</button>' : ""}
-      </form><p id="pl-msg" class="hint"></p></div>` : ""}`;
+        <div class="fr-btns"><button class="btn" type="submit">Save</button>
+        ${v.manual ? '<button class="more danger" type="button" id="pl-clear">Remove manual placement</button>' : ""}</div>
+      </form><p id="pl-msg" class="hint"></p>`, "admin") : ""}`;
   drawer.hidden = false; backdrop.hidden = false;
+  $("#dr-body").scrollTop = prev.scroll || 0;      // after showing it (a hidden box ignores this): a different breach starts at the top, a refresh after a flag keeps its place and its loaded sections
   loadBreachExtras(v); loadCompany(v);
   const done = () => { closeDrawer(); loadVictims(); loadTicker(); toast("Region updated"); };
   $("#plform")?.addEventListener("submit", async (ev) => {
