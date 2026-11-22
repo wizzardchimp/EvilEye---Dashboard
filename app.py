@@ -668,8 +668,29 @@ def _pwv(h):
     return hashlib.sha256(h.encode()).hexdigest()[:16]
 
 
+CLIENT_IP_HEADER = os.environ.get("CLIENT_IP_HEADER", "X-Real-IP").strip()   # set by Railway's edge; "" = ignore it
+PROXY_HOPS = max(1, int(os.environ.get("PROXY_HOPS", "1") or 1))             # proxies in front of the app, for X-Forwarded-For
+
+
+def _valid_ip(v):
+    try:
+        return str(ipaddress.ip_address((v or "").strip()))
+    except ValueError:
+        return None
+
+
 def _ip():
-    return (request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0]).strip()[:64]
+    """The client's address, for the activity log and the sign-in lockout.
+
+    X-Forwarded-For is a list that the client can start with any entries it likes; each proxy adds the address it
+    saw to the END. So the leftmost entry can be forged, and the entry our own proxy added (counting PROXY_HOPS
+    from the right) cannot. Railway's edge also sets X-Real-IP, which is preferred. Anything that is not a valid
+    IP address is ignored, and with no proxy headers (a local copy) the connection's own address is used."""
+    ip = _valid_ip(request.headers.get(CLIENT_IP_HEADER)) if CLIENT_IP_HEADER else None
+    if not ip:
+        parts = [p for p in request.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
+        ip = _valid_ip(parts[-PROXY_HOPS]) if len(parts) >= PROXY_HOPS else None
+    return ip or _valid_ip(request.remote_addr) or "unknown"
 
 
 def log(event, detail="", user=None, username=None):
@@ -782,13 +803,30 @@ def admin_required(fn):
     return wrapper
 
 
+LOCK_PAIR, LOCK_USER, LOCK_IP = 6, 30, 60     # wrong passwords in 15 minutes: one name from one address / one name overall / one address overall
+
+
 def _locked(username, ip):
-    """Lock a username after 6 failures in 15 minutes. The per-IP limit is much higher so one shared office
-    address is not locked out by a single person's typos."""
-    row = db.one("select count(*) filter (where lower(username)=lower(%s)) as by_user, "
+    """Should this sign-in attempt be refused without even checking the password?
+
+    Only genuine wrong-password attempts count (not the 'locked out' rows themselves, so hammering a locked
+    account does not extend the lock). The tight limit is per name AND address: someone guessing at 'admin'
+    from their own address is stopped after 6 tries, but the real admin, coming from a different address, is
+    not locked out by them. The two broad limits catch guessing spread over many addresses or many names; they
+    do not apply to an address this person has successfully signed in from in the last 30 days, so they cannot
+    be used to keep a real user out."""
+    row = db.one("select count(*) filter (where lower(username)=lower(%s) and ip=%s) as pair, "
+                 "count(*) filter (where lower(username)=lower(%s)) as by_user, "
                  "count(*) filter (where ip=%s) as by_ip from activity "
-                 "where event='login_failed' and ts > now() - interval '15 minutes'", (username, ip))
-    return row["by_user"] >= 6 or row["by_ip"] >= 40
+                 "where event='login_failed' and detail in ('bad credentials','disabled account') "
+                 "and ts > now() - interval '15 minutes'", (username, ip, username, ip))
+    if row["pair"] >= LOCK_PAIR:
+        return True
+    if row["by_user"] >= LOCK_USER or row["by_ip"] >= LOCK_IP:
+        known = db.one("select 1 as k from activity where event='login' and lower(username)=lower(%s) and ip=%s "
+                       "and ts > now() - interval '30 days' limit 1", (username, ip))
+        return not known
+    return False
 
 
 @app.get("/login")

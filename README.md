@@ -143,8 +143,26 @@ clicked** (where it was clicked and the destination host and path, query strings
 The Activity tab and each user's activity list show friendly event names ("Copied a leak-site address", "Screen wake on") with the
 raw name as a tooltip; the filter and the CSV export keep the raw names (`copy_leak_site`, `screen_wake_on`). Feed-supplied links are only ever used as
 http(s) links.
-Passwords are salted scrypt hashes, 10+ characters. A username locks for 15 minutes after 6 failed logins. Changing or
-resetting a password signs that user out everywhere.
+Passwords are salted scrypt hashes, 10+ characters. Changing or resetting a password signs that user out everywhere.
+
+**Sign-in lockout.** Only wrong-password attempts count, over a sliding 15 minutes:
+
+| Limit | Locks | Does not apply to |
+|---|---|---|
+| 6 wrong passwords for one name **from one address** | that name from that address | anyone else: the real admin, from their own address, is not locked out by someone guessing at `admin` |
+| 30 wrong passwords for one name from any addresses | that name, for a new address | an address that person has signed in from in the last 30 days |
+| 60 wrong passwords from one address over any names | that address, for names it has not signed in as before | a user who has signed in from that address in the last 30 days (a shared office address) |
+
+A locked attempt is refused without checking the password (so a correct guess does not get through) and is logged as
+"locked out", but those rows do not count towards the limits, so hammering a locked account does not extend the lock.
+
+**Client address.** The activity log and the lockout use the address Railway's edge reports in `X-Real-IP`; failing that, the
+**rightmost** entry of `X-Forwarded-For` (the one our own proxy added; entries a visitor puts at the front are ignored). Anything that
+is not a valid IP address is discarded, and a local copy uses the connection's own address. `CLIENT_IP_HEADER` and `PROXY_HOPS`
+override this if the hosting ever changes.
+
+**Dependencies** are pinned to exact tested versions in `requirements.txt` and checked with `pip-audit -r requirements.txt`
+(no known vulnerabilities at the last check). Update them deliberately: change the pin, run the tests, deploy.
 
 Without `DATABASE_URL` the app runs in legacy mode: one shared password (`EVILEYE_PASSWORD`), no user management.
 
@@ -180,6 +198,8 @@ entirely. The other headers stay on in both. The default, and any unrecognised v
 | `DATA_DIR` | Default `./data`. Use a Railway volume (e.g. `/data`) to keep the feed snapshot, region cache and Companies House cache. |
 | `COMPANIES_HOUSE_KEY` | Optional. Region lookups by company name, and the company details (registered office, directors) in the breach summary. REST key, used server-side only. |
 | `CSP_MODE` | Optional emergency switch for the Content-Security-Policy: `enforce` (default), `report-only` or `off`. See Security headers. |
+| `CLIENT_IP_HEADER` | Optional, default `X-Real-IP`: the header the host's proxy sets to the visitor's address. Empty to ignore it and use `X-Forwarded-For` only. |
+| `PROXY_HOPS` | Optional, default 1: how many proxies sit in front of the app, used to pick the right entry of `X-Forwarded-For` when `X-Real-IP` is absent. |
 | `STALE_MINUTES` | Optional, default 30. Page-open refresh only if data is older. |
 | `GEO_BUDGET` | Optional, default 400. API lookups per refresh. |
 
