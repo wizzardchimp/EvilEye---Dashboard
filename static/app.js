@@ -165,7 +165,7 @@ function tickerItem(x, showRegion, fresh, list, i) {
   const name = href ? `<a class="tk-name" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(href.slice(8))} (opens in a new tab)">${esc(x.title)}</a>` : esc(x.title);
   const area = x.town && placed(x) ? `<span class="tk-area">${esc(x.town)}</span>` : "";
   const mk = marks(x), fb = flagBtn(`tk:${list}:${i}`, x);
-  return `<li class="${fresh ? "fresh" : ""}"><div class="tk-main"><div class="tk-title">${name} ${reg}${x.new ? ' <span class="badge new">NEW</span>' : ""}${mk ? " " + mk : ""}</div><div class="meta">${meta}</div></div>${area || fb ? `<div class="tk-side">${area}${fb}</div>` : ""}</li>`;
+  return `<li class="tk-open${fresh ? " fresh" : ""}" data-ti="${list}:${i}" tabindex="0"><div class="tk-main"><div class="tk-title">${name} ${reg}${x.new ? ' <span class="badge new">NEW</span>' : ""}${mk ? " " + mk : ""}</div><div class="meta">${meta}</div></div>${area || fb ? `<div class="tk-side">${area}${fb}</div>` : ""}</li>`;
 }
 function tickerFoot(which) {
   const s = TK[which], foot = $("#tkf-" + which), shown = Math.min(s.n, s.total), expanded = s.n > TK_FIRST;
@@ -194,7 +194,19 @@ async function loadTicker(expanding = false) {
     $("#tk-updated").textContent = d.updated ? `data ${ago(d.updated)}` : "";
   } catch (e) { /* keep what is on screen */ }
 }
+async function openBreach(ref) {
+  const [list, i] = ref.split(":"), x = tkItems[list] && tkItems[list][+i];
+  if (!x) return;
+  try { const v = await fetchVictim(x.title); if (v) openVictim(v); else toast("Could not find that breach any more."); }
+  catch (e) { toast("Could not load the breach details: " + e.message); }
+}
+document.querySelector(".ticker").addEventListener("keydown", (e) => {
+  const li = e.target.closest("li[data-ti]");
+  if (li && e.target === li && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openBreach(li.dataset.ti); }
+});
 document.querySelector(".ticker").addEventListener("click", (e) => {
+  const li = e.target.closest("li[data-ti]");
+  if (li && !e.target.closest("a, button")) { openBreach(li.dataset.ti); return; }
   const b = e.target.closest("button[data-tk]");
   if (!b) return;
   const s = TK[b.dataset.tk];
@@ -429,6 +441,38 @@ $("#victim-rows").addEventListener("keydown", (e) => { if (e.key === "Enter" && 
 // ------------------------------------------------------------------ victim details drawer
 const drawer = $("#drawer"), backdrop = $("#drawer-backdrop");
 function closeDrawer() { drawer.hidden = true; backdrop.hidden = true; }
+const fmtPub = (iso) => (/T00:00:00/.test(iso || "") ? fmtDate(iso) : fmtTime(iso));      // posts often carry a date with no time
+const srcRow = (badge, body, meta) => `<li><span class="badge src">${esc(badge)}</span><div class="br-sl">${body}${meta ? `<div class="meta">${meta}</div>` : ""}</div></li>`;
+const outLink = (url, text) => `<a href="${esc(safeHref(url))}" target="_blank" rel="noopener noreferrer">${esc(text)} ↗</a>`;
+function gangHtml(ctx) {
+  if (!ctx) return '<div class="ldr">Loading gang details…</div>';
+  const g = ctx.gang;
+  if (!g) return '<div class="ldr">Could not load the gang details.</div>';
+  const facts = [`${g.uk_victims} UK victim${g.uk_victims === 1 ? "" : "s"} on record here`, g.sites ? `${g.sites} known leak site${g.sites === 1 ? "" : "s"}${g.online ? ` (${g.online} online)` : ""}` : "", g.added ? `tracked since ${fmtDate(g.added)}` : ""].filter(Boolean).join(" · ");
+  return `<div class="br-gang"><div class="br-gh"><span class="badge grp">${esc(g.name)}</span>${g.altname ? ` <span class="meta">also known as ${esc(g.altname)}</span>` : ""}</div>
+    <div class="meta">${esc(facts)}</div>
+    <p class="br-gd${g.description ? "" : " meta"}">${esc(g.description || "No description on file for this group.")}</p>
+    <button type="button" class="more" data-gang-go="${esc(g.name)}">Show in Gang Catalog</button></div>`;
+}
+const MENTION_KIND = { press: "Press mention", "leak-post": "Listed on RansomLook" };
+function sourcesHtml(v, ctx) {
+  const g = ctx && ctx.gang, rows = [], list = (ctx && ctx.mentions) || [];
+  rows.push(srcRow("ransomware.live", `Victim tracker this dashboard reads the breach from${g && g.profile_url ? `<br>${outLink(g.profile_url, g.name + " on ransomware.live")}` : ""}`, `First picked up ${esc(fmtTime(v.seen || v.discovered))}`));
+  if (g && g.ransomlook_url && !list.some((m) => m.kind === "leak-post")) rows.push(srcRow("RansomLook", `Also tracks this gang<br>${outLink(g.ransomlook_url, g.name + " on RansomLook")}`, ""));
+  if (v.post_url) rows.push(srcRow("Leak site", `The gang's own post (the original)<button type="button" class="copy" data-copy="${esc(v.post_url)}" data-gang="${esc(v.group)}" data-log="${esc("Victim " + v.post_title + " (" + v.group + "): " + v.post_url)}"><span class="addr">${esc(v.post_url)}</span><span class="cpy">copy</span></button>`, `Posted ${esc(fmtPub(v.discovered))} · copy only, never opened from here`));
+  if (!ctx) rows.push('<li class="ldr">Looking for other mentions…</li>');
+  else list.forEach((m) => rows.push(srcRow(m.source || "Feed", outLink(m.url, m.title), `${esc(MENTION_KIND[m.kind] || "News or alert")} · ${esc(fmtDate(m.date))}`)));
+  if (ctx && ctx.failed) rows.push('<li class="ldr">Could not load other mentions. Try opening this breach again.</li>');
+  else if (ctx && !list.length) rows.push('<li class="ldr">No other mentions of this breach in the dashboard\'s news and alert feeds.</li>');
+  return `<ul class="br-src">${rows.join("")}</ul>`;
+}
+async function loadBreachExtras(v) {
+  let ctx;
+  try { ctx = await api(`/api/victims/context?title=${encodeURIComponent(v.post_title)}`); } catch (e) { ctx = { gang: null, mentions: [], failed: true }; }
+  if (drawer.hidden || !drawerVictim || drawerVictim.post_title !== v.post_title) return;      // the person has moved on
+  if ($("#br-gang")) $("#br-gang").innerHTML = gangHtml(ctx);
+  if ($("#br-src")) $("#br-src").innerHTML = sourcesHtml(v, ctx);
+}
 const BASIS = { text: "a place name in its description", postcode: "a postcode in its description", "companies-house": "its Companies House registered office",
   manual: "set manually by an admin" };
 function openVictim(v, quiet = false) {
@@ -444,15 +488,22 @@ function openVictim(v, quiet = false) {
     <div>${newBadge(v).trim()} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
     ${ME.database ? `<div class="dr-actions">${marks(v)}<button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate</button></div>` : ""}
     <dl class="dl">
-      <dt>First seen</dt><dd>${fmtTime(v.seen || v.discovered)}</dd>
-      <dt>Region</dt><dd>${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) ? ` · ${esc(v.town)}` : ""}</dd>
-      <dt>Basis</dt><dd>${esc(basis)}${v.region_source && v.region_source !== "flag" && v.why ? ` ${esc(v.why)}` : ""}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}</dd>
-      ${v.registered_name ? `<dt>Registered as</dt><dd>${esc(v.registered_name)}</dd>` : ""}
-      ${isDomain(v.website) ? `<dt>Website</dt><dd><a href="https://${esc(v.website)}" target="_blank" rel="noopener noreferrer">${esc(v.website)}</a></dd>` : ""}
+      <dt>Original site</dt><dd>${siteHref(v.website) ? outLink(siteHref(v.website), siteHref(v.website).slice(8)) : '<span class="meta">Not given in the post</span>'}</dd>
+      <dt>Published</dt><dd>${esc(fmtPub(v.discovered))} <span class="meta">the date on the leak post</span></dd>
+      <dt>First seen</dt><dd>${esc(fmtTime(v.seen || v.discovered))} <span class="meta">${esc(ago(v.seen || v.discovered))}, when the dashboard's feeds picked it up</span></dd>
+      <dt>Gang</dt><dd><strong>${esc(v.group)}</strong></dd>
+      <dt>Data</dt><dd>${v.data ? `${esc(v.data)} <span class="meta">${v.data_basis === "stated" ? "as stated by the gang" : "quoted in the post text"}</span>` : '<span class="meta">Not stated in the post</span>'}</dd>
+      ${v.ransom ? `<dt>Ransom</dt><dd>${esc(v.ransom)} <span class="meta">as posted</span></dd>` : ""}
       ${v.reposts ? `<dt>Re-posted</dt><dd>${v.reposts} more time${v.reposts === 1 ? "" : "s"} by the same group</dd>` : ""}
     </dl>
+    <div><div class="sect">Gang responsible</div><div id="br-gang">${gangHtml(null)}</div></div>
+    <div><div class="sect">Where this was sourced from</div><div id="br-src">${sourcesHtml(v, null)}</div></div>
+    <div><div class="sect">Region</div><dl class="dl">
+      <dt>Region</dt><dd>${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) && v.town !== v.force_name ? ` · ${esc(v.town)}` : ""}</dd>
+      <dt>Basis</dt><dd>${esc(basis)}${v.region_source && v.region_source !== "flag" && v.why ? ` ${esc(v.why)}` : ""}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}</dd>
+      ${v.registered_name ? `<dt>Registered as</dt><dd>${esc(v.registered_name)}</dd>` : ""}
+    </dl></div>
     ${v.description ? `<div><div class="sect">Description (from ransomware.live)</div><div class="desc">${esc(v.description)}</div></div>` : ""}
-    ${v.post_url ? `<div><div class="sect">Leak-site post (copy only, never opened from here)</div><button type="button" class="copy" data-copy="${esc(v.post_url)}" data-gang="${esc(v.group)}" data-log="${esc("Victim " + v.post_title + " (" + v.group + "): " + v.post_url)}"><span class="addr">${esc(v.post_url)}</span><span class="cpy">copy</span></button></div>` : ""}
     ${canEdit ? `<div><div class="sect">Admin: set region</div>
       <form id="plform" class="form-row">
         <label class="field">Region<select id="pl-rocu" class="search">${ME.regions.filter((r) => r !== "Unplaced").map((r) => `<option ${r === v.rocu ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
@@ -462,6 +513,7 @@ function openVictim(v, quiet = false) {
         ${v.manual ? '<button class="more danger" type="button" id="pl-clear">Remove manual placement</button>' : ""}
       </form><p id="pl-msg" class="hint"></p></div>` : ""}`;
   drawer.hidden = false; backdrop.hidden = false;
+  loadBreachExtras(v);
   const done = () => { closeDrawer(); loadVictims(); loadTicker(); toast("Region updated"); };
   $("#plform")?.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -703,6 +755,12 @@ function openFlag(v) {
   (document.querySelector('#fd-body input[name="fp"]') || $("#fd-init")).focus();
   track("modal_open", "flag or allocate");
 }
+$("#dr-body").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-gang-go]");
+  if (!b) return;
+  closeDrawer(); showTab("gangs", true);
+  $("#gq").value = b.dataset.gangGo; $("#gq").dispatchEvent(new Event("input"));
+});
 document.addEventListener("click", (e) => { const b = e.target.closest("button[data-flag]"); if (b) { e.preventDefault(); openFlag(refVictim(b.dataset.flag)); } });
 $("#fd-close").addEventListener("click", closeFlag);
 fdlg.addEventListener("click", (e) => { if (e.target === fdlg) closeFlag(); });

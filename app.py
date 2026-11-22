@@ -431,6 +431,31 @@ def _build_news(gangs):
     return out, errs, stamps
 
 
+_SZ = re.compile(r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)\s?(KB|MB|GB|TB|PB|kilobytes?|megabytes?|gigabytes?|terabytes?|petabytes?)\b", re.I)
+
+
+def _size_text(m):
+    n = m.group(1).replace(",", "")
+    try:
+        if float(n) <= 0:
+            return ""
+    except ValueError:
+        return ""
+    return f"{n} {m.group(2)[0].upper()}B"
+
+
+def _data_amount(raw, desc):
+    """How much data the post claims: the feed's own data_size when it starts with a clean size, else a size quoted in the
+    post text. Returns (text, basis): basis is "stated", "post" (quoted in the text) or "" (not stated)."""
+    m = _SZ.match((raw or "").strip())
+    if m and _size_text(m):
+        return _size_text(m), "stated"
+    for m in _SZ.finditer(desc or ""):
+        if _size_text(m):
+            return _size_text(m), "post"
+    return "", ""
+
+
 def _ingest():
     global _refreshing
     errors, stamps = {}, {}
@@ -450,12 +475,16 @@ def _ingest():
             if not over and not hit and not pc and not site.endswith(".uk"):
                 over = geo.bare_foreign(desc)                      # e.g. a description that is just "United States"
                 weak = bool(over)
+            data_text, data_basis = _data_amount(v.get("data_size"), desc)
+            ransom = str(v.get("ransom") or "").strip()[:40]
+            if ransom.lower() in ("0", "n/a", "none", "null"):
+                ransom = ""
             rec = {
                 "post_title": title, "key": geo.norm(title), "group": v.get("group_name") or "unknown",
                 "activity": _sector(v.get("activity")), "discovered": v.get("published") or v.get("discovered"),
                 "seen": v.get("discovered") or v.get("published") or "", "year": _year(v),
                 "website": (v.get("website") or "").strip(), "post_url": v.get("post_url") or "",
-                "description": desc[:700], "reposts": 0,
+                "description": desc[:700], "reposts": 0, "data": data_text, "data_basis": data_basis, "ransom": ransom,
                 "text_force": hit[0] if hit else "", "text_term": hit[1] if hit else "",
                 "postcode_hint": pc, "text_overseas": over or "", "overseas_weak": weak, "registered_name": "", "town": ""}
             k = (rec["key"] or title, rec["group"])
@@ -1200,6 +1229,59 @@ def victim_alloc_clear():
     return jsonify(ok=True)
 
 
+# ---- breach details: the gang responsible, and other places the breach is mentioned
+def _slug(name):
+    s = (name or "").strip().lower()
+    return s if re.fullmatch(r"[a-z0-9_-]{2,40}", s) else ""        # only names that make a valid group-page address
+
+
+def _gang_info(group):
+    g = (group or "").strip().lower()
+    gr = next((x for x in STATE["gangs"] if x["name"].lower() == g or (x.get("altname") or "").lower() == g), None)
+    slug = _slug(gr["name"] if gr else group)
+    sites = (gr or {}).get("leak_sites") or []
+    return {"name": gr["name"] if gr else group, "altname": (gr or {}).get("altname") or "",
+            "description": _plain((gr or {}).get("description"), 360), "added": (gr or {}).get("added_date") or "",
+            "uk_victims": sum(1 for x in STATE["victims"] if (x["group"] or "").lower() == g),
+            "sites": len(sites), "online": sum(1 for s in sites if s.get("available") is True or s.get("status") == "ONLINE"),
+            "profile_url": f"https://www.ransomware.live/group/{slug}" if slug else "",
+            "ransomlook_url": f"https://www.ransomlook.io/group/{slug}" if slug and gr and "ransomlook" in gr["sources"] else ""}
+
+
+def _mentions(v, limit=8):
+    """Items in the dashboard's own alert and news feeds that name this victim, within 30 days of the post. Matched by the
+    whole company name; names too short or generic to match on their own are skipped, so a mention is never a guess."""
+    name = v["key"]
+    t0 = _ts(v.get("seen")) or _ts(v.get("discovered"))
+    if not name or not t0 or (len(name) < 7 and " " not in name):
+        return []
+    rx = re.compile(r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])")
+    out, seen_urls = [], set()
+
+    def consider(title, summary, url, published, source, kind):
+        t = _ts(published)
+        u = _abs_url(url, "")
+        if not t or not u or u in seen_urls or abs((t - t0).total_seconds()) > 30 * 86400:
+            return
+        if rx.search(geo.norm((title or "") + " " + (summary or ""))):
+            seen_urls.add(u)
+            out.append({"source": source, "kind": kind, "title": (title or "")[:200], "url": u, "date": t.isoformat()})
+
+    for it in STATE["intel"]:
+        consider(it.get("title"), it.get("summary"), it.get("url"), it.get("published"), it.get("source") or "", it.get("kind") or "")
+    for n in STATE["news"]:
+        consider(n.get("title"), n.get("summary"), n.get("url"), n.get("published"), n.get("source_name") or n.get("source") or "", "news")
+    return sorted(out, key=lambda m: m["date"], reverse=True)[:limit]
+
+
+@app.get("/api/victims/context")
+def victim_context():
+    v = _find_victim(request.args.get("title"))
+    if not v:
+        return jsonify(error="Unknown victim."), 404
+    return jsonify(gang=_gang_info(v["group"]), mentions=_mentions(v))
+
+
 # ----------------------------------------------------------------- data queries
 def _region():
     return request.args.get("rocu", "")
@@ -1275,7 +1357,8 @@ def _alloc_view(v):
 
 
 VIEW_KEYS = ("post_title", "group", "activity", "discovered", "seen", "year", "website", "post_url", "rocu", "force", "force_name",
-             "town", "region_source", "registered_name", "manual", "override_note", "description", "reposts", "overseas_weak")
+             "town", "region_source", "registered_name", "manual", "override_note", "description", "reposts", "overseas_weak",
+             "data", "data_basis", "ransom")
 
 
 def _view(v, prev):

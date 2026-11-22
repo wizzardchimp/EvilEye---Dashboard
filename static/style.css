@@ -635,3 +635,20 @@ select.search { flex: 0 1 210px; }
 #toast.act { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
 #toast .toast-act { background: transparent; border: 0; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ---------- breach details (the pop-up) ---------- */
+.ticker-list li.tk-open { cursor: pointer; margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 6px; }
+.ticker-list li.tk-open:hover { background: var(--hover); }
+.ticker-list li.tk-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.drawer .dl dd .meta { margin-left: 4px; }
+.br-gang { border: 1px solid var(--border); background: var(--surface-2); border-radius: 9px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.br-gh { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.br-gd { margin: 2px 0 4px; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.br-src { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.br-src li { display: grid; grid-template-columns: 128px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 13px; line-height: 1.45; }
+.br-src li.ldr { display: block; color: var(--muted); }
+.br-src li > .badge { justify-self: start; max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.br-sl { min-width: 0; overflow-wrap: break-word; }
+.br-sl .copy { margin-top: 6px; width: 100%; }
+.br-sl .meta { margin-top: 3px; }
+@media (max-width: 480px) { .br-src li { grid-template-columns: minmax(0, 1fr); gap: 4px; } }

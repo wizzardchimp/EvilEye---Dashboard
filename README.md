@@ -36,9 +36,26 @@ thumbnail.
 The list is de-duplicated (the same company claimed again by the same group is one victim). Sector is ransomware.live's own
 classification; victims it has not classified are reported separately as Unclassified, not ranked. Each row shows the
 company with its town or district in brackets, sorts by any column, pages 50 at a time and exports to CSV (respecting the
-region filter). Click a row for the full details drawer (description, how the region was decided, copy-only leak-site address,
-and for admins the manual region editor). "New" badges mark victims first seen since your previous visit (a visit starts when
+region filter). Click a row, or any entry in the Overview "Latest" lists, for the breach details (see below). "New" badges mark victims first seen since your previous visit (a visit starts when
 you open the page more than 30 minutes after the last one).
+
+## Breach details
+Clicking a breach (a row in UK Victims, or anywhere on an entry in the Overview "Latest" lists except its name link and flag
+button) opens a details panel:
+
+- **Original site**: the company's own web address when the post gives one (otherwise "Not given in the post").
+- **Published**: the date on the leak post. **First seen**: when the dashboard's feeds picked it up.
+- **Gang**, **Data** and **Ransom**. The data amount is the feed's own size when it is a clean figure ("as stated by the
+  gang"), otherwise a size quoted in the post text ("quoted in the post text"); about 14% of breaches have either, and the
+  rest say "Not stated in the post" rather than guessing. A ransom figure is shown exactly as posted.
+- **Gang responsible**: aliases, a short description, how many UK victims are on record, known leak sites (and how many are
+  online), when it was first tracked, and a button to find it in the Gang Catalog.
+- **Where this was sourced from**: ransomware.live (the victim tracker the breach is read from, linked to that gang's page),
+  RansomLook when it also tracks the gang, the gang's own leak-site post, and any other mention in the dashboard's own alert
+  and news feeds. Mentions are matched on the whole company name and must fall within 30 days of the post, and names too short
+  or generic to match safely are skipped, so a listed mention is never a guess. The leak-site address is **copy only**: it is
+  never opened from the dashboard. The extras load from `GET /api/victims/context?title=...`.
+- **Region** (and how it was decided), the description, flags and allocation, and the admin region editor.
 
 ## Regions (ROCU)
 ROCUs are groupings of police forces: ROCU > force > organisation. The 43 forces of England and Wales map to 10 ROCUs;
