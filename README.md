@@ -148,6 +148,28 @@ resetting a password signs that user out everywhere.
 
 Without `DATABASE_URL` the app runs in legacy mode: one shared password (`EVILEYE_PASSWORD`), no user management.
 
+## Security headers
+Every response carries browser-side protections (`security_headers` in `app.py`):
+
+| Header | What it does |
+|---|---|
+| `Content-Security-Policy` | Scripts, images, fonts and connections may only come from the site itself: no inline scripts, no `eval`, no other hosts. Forms post only to the site, no `<base>` tricks, no plug-ins. Styles may also be inline, the one concession, because a few `style="..."` attributes set bar widths. |
+| `Strict-Transport-Security` | HTTPS only for a year (`includeSubDomains`), sent when the request arrived over HTTPS. |
+| `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` | The dashboard cannot be put in a frame on any site, including itself (clickjacking). |
+| `X-Content-Type-Options: nosniff` | Browsers must trust the declared file type. |
+| `Referrer-Policy: no-referrer` | Outside links never learn the dashboard address. |
+| `Permissions-Policy` | Camera, microphone, location, payment, USB and motion sensors are off. The screen wake lock and the clipboard (copy buttons) stay available. |
+| `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy: same-origin` | Other sites cannot get a handle on the dashboard window or load its files. |
+| `Cache-Control: no-store` | Pages, data and downloads are never kept by the browser or a proxy (static files and the thumbnail proxy keep their own caching). |
+
+To keep the policy strict, the three small scripts that used to be inline now live in files: `static/theme-init.js` (applies a saved
+light theme before the page paints) and `static/login.js` (the sign-in page's messages and theme button). Any new script must be a
+file under `/static/`; inline `<script>` blocks and `onclick="..."` attributes will be blocked.
+
+**If the policy ever blocks something it should not**, set `CSP_MODE=report-only` in Railway and redeploy: the site then works
+exactly as before while the browser console (F12) lists what the policy would have blocked. `CSP_MODE=off` removes the policy
+entirely. The other headers stay on in both. The default, and any unrecognised value, is the enforcing policy.
+
 ## Environment variables
 | Name | Purpose |
 |---|---|
@@ -157,6 +179,7 @@ Without `DATABASE_URL` the app runs in legacy mode: one shared password (`EVILEY
 | `SECRET_KEY` | Required in production. Long random string for session cookies. |
 | `DATA_DIR` | Default `./data`. Use a Railway volume (e.g. `/data`) to keep the feed snapshot, region cache and Companies House cache. |
 | `COMPANIES_HOUSE_KEY` | Optional. Region lookups by company name, and the company details (registered office, directors) in the breach summary. REST key, used server-side only. |
+| `CSP_MODE` | Optional emergency switch for the Content-Security-Policy: `enforce` (default), `report-only` or `off`. See Security headers. |
 | `STALE_MINUTES` | Optional, default 30. Page-open refresh only if data is older. |
 | `GEO_BUDGET` | Optional, default 400. API lookups per refresh. |
 

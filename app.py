@@ -744,6 +744,32 @@ def guard():
     return None
 
 
+# ----------------------------------------------------------------- security headers
+CSP_MODE = os.environ.get("CSP_MODE", "enforce").strip().lower()       # enforce | report-only | off  (an emergency switch, see the README)
+CSP = "; ".join(["default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'",   # inline styles only: a few style="..." attributes
+                 "img-src 'self'", "font-src 'self'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'",
+                 "form-action 'self'", "frame-ancestors 'none'"])
+PERMISSIONS = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=()"   # wake lock and clipboard stay allowed
+
+
+@app.after_request
+def security_headers(resp):
+    h = resp.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "DENY")                              # nobody may put the dashboard in a frame (clickjacking)
+    h.setdefault("Referrer-Policy", "no-referrer")                       # outside links never learn where the click came from
+    h.setdefault("Permissions-Policy", PERMISSIONS)
+    h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    h.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    if request.is_secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https":
+        h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    if CSP_MODE != "off":
+        h.setdefault("Content-Security-Policy-Report-Only" if CSP_MODE == "report-only" else "Content-Security-Policy", CSP)
+    if not request.path.startswith("/static/"):
+        h.setdefault("Cache-Control", "no-store")                        # pages and data are never kept by the browser or a proxy
+    return resp
+
+
 def admin_required(fn):
     @wraps(fn)
     def wrapper(*a, **kw):
@@ -820,7 +846,9 @@ def healthz():
 
 @app.get("/")
 def index():
-    return send_from_directory(BASE / "static", "index.html")
+    resp = send_from_directory(BASE / "static", "index.html")
+    resp.headers["Cache-Control"] = "no-store"                           # Flask's own default is "no-cache", which still lets a copy be kept
+    return resp
 
 
 @app.get("/health")
