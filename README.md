@@ -156,10 +156,11 @@ Passwords are salted scrypt hashes, 10+ characters. Changing or resetting a pass
 A locked attempt is refused without checking the password (so a correct guess does not get through) and is logged as
 "locked out", but those rows do not count towards the limits, so hammering a locked account does not extend the lock.
 
-**Client address.** The activity log and the lockout use the address Railway's edge reports in `X-Real-IP`; failing that, the
-**rightmost** entry of `X-Forwarded-For` (the one our own proxy added; entries a visitor puts at the front are ignored). Anything that
-is not a valid IP address is discarded, and a local copy uses the connection's own address. `CLIENT_IP_HEADER` and `PROXY_HOPS`
-override this if the hosting ever changes.
+**Client address.** The activity log and the lockout use the address in `X-Real-IP`. Railway's edge overwrites that header and
+`X-Forwarded-For` on every request (checked against the live site: a visitor's forged values never arrive), so the visitor cannot choose
+their own address. If `X-Real-IP` is missing, the fallback is `X-Forwarded-For`, which on Railway reads "visitor, edge", so the entry
+**second from the right** is used (not the last, which is Railway's own server, and not the first). Anything that is not a valid IP address is
+discarded, and a local copy uses the connection's own address. `CLIENT_IP_HEADER` and `PROXY_HOPS` override this if the hosting changes.
 
 **Dependencies** are pinned to exact tested versions in `requirements.txt` and checked with `pip-audit -r requirements.txt`
 (no known vulnerabilities at the last check). Update them deliberately: change the pin, run the tests, deploy.
@@ -199,7 +200,7 @@ entirely. The other headers stay on in both. The default, and any unrecognised v
 | `COMPANIES_HOUSE_KEY` | Optional. Region lookups by company name, and the company details (registered office, directors) in the breach summary. REST key, used server-side only. |
 | `CSP_MODE` | Optional emergency switch for the Content-Security-Policy: `enforce` (default), `report-only` or `off`. See Security headers. |
 | `CLIENT_IP_HEADER` | Optional, default `X-Real-IP`: the header the host's proxy sets to the visitor's address. Empty to ignore it and use `X-Forwarded-For` only. |
-| `PROXY_HOPS` | Optional, default 1: how many proxies sit in front of the app, used to pick the right entry of `X-Forwarded-For` when `X-Real-IP` is absent. |
+| `PROXY_HOPS` | Optional, default 2: which entry of `X-Forwarded-For`, counting from the right, is the visitor (Railway writes "visitor, edge"). Only used when `X-Real-IP` is absent. |
 | `STALE_MINUTES` | Optional, default 30. Page-open refresh only if data is older. |
 | `GEO_BUDGET` | Optional, default 400. API lookups per refresh. |
 

@@ -669,7 +669,7 @@ def _pwv(h):
 
 
 CLIENT_IP_HEADER = os.environ.get("CLIENT_IP_HEADER", "X-Real-IP").strip()   # set by Railway's edge; "" = ignore it
-PROXY_HOPS = max(1, int(os.environ.get("PROXY_HOPS", "1") or 1))             # proxies in front of the app, for X-Forwarded-For
+PROXY_HOPS = max(1, int(os.environ.get("PROXY_HOPS", "2") or 2))             # entries our own infrastructure adds to the END of X-Forwarded-For (Railway: "client, edge")
 
 
 def _valid_ip(v):
@@ -682,10 +682,12 @@ def _valid_ip(v):
 def _ip():
     """The client's address, for the activity log and the sign-in lockout.
 
-    X-Forwarded-For is a list that the client can start with any entries it likes; each proxy adds the address it
-    saw to the END. So the leftmost entry can be forged, and the entry our own proxy added (counting PROXY_HOPS
-    from the right) cannot. Railway's edge also sets X-Real-IP, which is preferred. Anything that is not a valid
-    IP address is ignored, and with no proxy headers (a local copy) the connection's own address is used."""
+    Railway's edge overwrites X-Real-IP and X-Forwarded-For (checked against the live site: forged values never
+    arrive), and X-Real-IP is the visitor's address, so that is preferred. The fallback is X-Forwarded-For, which
+    on Railway reads "visitor, edge" (the edge adds itself last), so the visitor is PROXY_HOPS=2 from the right.
+    Counting from the right rather than taking the leftmost entry means entries a visitor puts at the front are
+    never believed, even on a host that appends instead of overwriting. Anything that is not a valid IP address is
+    ignored, and with no usable proxy header (a local copy) the connection's own address is used."""
     ip = _valid_ip(request.headers.get(CLIENT_IP_HEADER)) if CLIENT_IP_HEADER else None
     if not ip:
         parts = [p for p in request.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
