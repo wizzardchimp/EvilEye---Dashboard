@@ -1335,7 +1335,7 @@ gs.clear.addEventListener("click", () => { gs.input.value = ""; gs.clear.hidden 
 document.addEventListener("pointerdown", (e) => { gs.inside = gs.box.contains(e.target); if (!gs.pop.hidden && !gs.inside) gsClose(); });
 document.addEventListener("pointerup", () => setTimeout(() => { gs.inside = false; if (!gs.pop.hidden && !gs.box.contains(document.activeElement)) gsClose(); }, 60));       // and if focus left while the pointer was down, close now
 gs.box.addEventListener("focusout", () => setTimeout(() => { if (!gs.inside && !gs.box.contains(document.activeElement)) gsClose(); }, 0));      // Tab away closes it; a tap inside does not
-const gsFocus = () => { gs.input.focus(); gs.input.select(); };
+const gsFocus = () => { if (window.scrollY > 0) window.scrollTo(0, 0); gs.input.focus({ preventScroll: true }); gs.input.select(); };       // the tab row scrolls away: come back to it (it would land under the pinned header)
 
 // keyboard: "/" jumps to the search box of the current tab (or the top-bar search), Ctrl/Cmd+K to the top-bar search from anywhere, Esc closes dialogs
 document.addEventListener("keydown", (e) => {

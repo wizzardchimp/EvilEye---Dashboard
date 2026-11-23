@@ -37,13 +37,16 @@ The list is de-duplicated (the same company claimed again by the same group is o
 classification; victims it has not classified are reported separately as Unclassified, not ranked. Each row shows the
 company with its town or district in brackets, sorts by any column, pages 50 at a time and exports to CSV (respecting the
 region filter). Click a row, or any entry in the Overview "Latest" lists, for the breach details (see below). "New" badges mark victims first seen since your previous visit (a visit starts when
-you open the page more than 30 minutes after the last one). The filter box matches the same way the top-bar search does (below), so
+you open the page more than 30 minutes after the last one). The filter box matches the same way the search box does (below), so
 "wine", "west midlands" or a website all work, and every word you type must be found.
 
 ## Search
-The box in the top bar searches **everything the dashboard has cached**: every breach (UK, overseas and unplaced alike, flagged ones
-too, whatever region is chosen), every gang, every dark web news story and every real alert. Press `/` (on a tab with no box of
-its own) or `Ctrl`/`Cmd`+`K` (anywhere) to jump to it. From two letters on, a list drops down under the box:
+The search box sits at the **right-hand end of the tab bar** on a desktop (1100px and wider; its list drops down lined up with the box's
+right edge). On tablets (641 to 1099px) it is in the header on its own row under the brand, and on phones in the header between the logo
+row and the region picker; it moves by itself if you resize the window, keeping what you were typing. It searches **everything the
+dashboard has cached**: every breach (UK, overseas and unplaced alike, flagged ones too, whatever region is chosen), every gang, every
+dark web news story and every real alert. Press `/` (on a tab with no box of its own) or `Ctrl`/`Cmd`+`K` (anywhere) to jump to it; if the
+page is scrolled down they take you back to the top, where the box is. From two letters on, a list drops down under the box:
 
 - **Breaches** (up to 8, with the true total), **Gangs** (3), **Dark web news** (4) and **Alerts** (3), each row with what you need to
   recognise it (a breach shows gang, sector, town and region, and how long ago it was first seen, with NEW, false positive and
@@ -72,7 +75,7 @@ and `--fs` is 1 normally and 1.15 under 640px. Wider screens are unchanged. Grid
 - **Header:** logo and name on the left and the four buttons on the same row on the right; then the search box; then "REGION" with the
   sync status on its right and the region picker full width beneath. About 200px tall, and it scrolls away with the page (on larger
   screens it stays pinned). The tagline is dropped under 480px, and the smallest phones (340px and under) get slightly smaller buttons.
-  Between 641 and 1099px the search sits on its own row under the brand; at 1100px and wider it shares the row.
+  Between 641 and 1099px the search sits on its own row under the brand; at 1100px and wider it moves to the right of the tab bar.
 - **Region banner** ("West Midlands only" with Show all UK): one slim line the width of the page; a long region name is shortened with
   an ellipsis before the button ever is, and the word "Showing" is dropped under 480px.
 - **Chosen region first:** when a region is chosen and the two Overview lists are stacked, "Latest in <region>" is above "Latest UK
@@ -223,8 +226,9 @@ Every response carries browser-side protections (`security_headers` in `app.py`)
 | `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy: same-origin` | Other sites cannot get a handle on the dashboard window or load its files. |
 | `Cache-Control: no-store` | Pages, data and downloads are never kept by the browser or a proxy (static files and the thumbnail proxy keep their own caching). |
 
-To keep the policy strict, the three small scripts that used to be inline now live in files: `static/theme-init.js` (applies a saved
-light theme before the page paints) and `static/login.js` (the sign-in page's messages and theme button). Any new script must be a
+To keep the policy strict, the small scripts that used to be inline now live in files: `static/theme-init.js` (applies a saved
+light theme before the page paints), `static/login.js` (the sign-in page's messages and theme button) and `static/gs-place.js` (puts the
+search box in the tab bar's row or the header, depending on the screen width, before the page first paints). Any new script must be a
 file under `/static/`; inline `<script>` blocks and `onclick="..."` attributes will be blocked.
 
 **If the policy ever blocks something it should not**, set `CSP_MODE=report-only` in Railway and redeploy: the site then works

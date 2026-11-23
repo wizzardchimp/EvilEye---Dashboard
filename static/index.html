@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script src="/static/theme-init.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=63">
+  <link rel="stylesheet" href="/static/style.css?v=65">
 </head>
 <body>
   <header class="topbar">
@@ -54,6 +54,7 @@
     </div>
   </header>
 
+  <div class="navrow" id="navrow">
   <nav class="tabs" id="tabs">
     <button class="tab active" data-tab="overview">Overview</button>
     <button class="tab" data-tab="victims">UK Victims</button>
@@ -63,6 +64,8 @@
     <button class="tab admin-only" data-tab="users" hidden>Users</button>
     <button class="tab admin-only" data-tab="activity" hidden>Activity</button>
   </nav>
+  </div>
+  <script src="/static/gs-place.js?v=1"></script>
   <div class="filterbar" id="filterbar" hidden>
     <span class="fb"><span class="fb-t"><span class="fb-lead">Showing </span><strong id="fb-region"></strong> only</span><button type="button" id="fb-clear" aria-label="Show all UK">Show all UK &times;</button></span>
   </div>
@@ -374,6 +377,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i><i id="ob-dot3"></i><i id="ob-dot4"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=62"></script>
+  <script src="/static/app.js?v=63"></script>
 </body>
 </html>
