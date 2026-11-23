@@ -1606,9 +1606,11 @@ def _filter_victims():
         items = [v for v in items if v["group"] == request.args["group"]]
     if request.args.get("sector"):
         items = [v for v in items if v["activity"] == request.args["sector"]]
-    q = request.args.get("q", "").lower()
-    if q:
-        items = [v for v in items if q in (v["post_title"] + " " + v["website"] + " " + v["group"] + " " + (v.get("town") or "")).lower()]
+    if request.args.get("title"):
+        items = [v for v in items if v["post_title"] == request.args["title"]]
+    q = request.args.get("q", "").strip()
+    if q:           # every word must be found (name, registered name, gang, website, place, region, sector, description): same rules as the search box
+        items = [r[1] for r in _search_rank(q, [(v, _victim_fields(v)) for v in items])]
     if request.args.get("new") == "1":
         prev = _prev_visit()
         items = [v for v in items if prev and (_ts(v.get("seen")) or prev) > prev]
@@ -1669,9 +1671,119 @@ def api_intel():
     items = STATE["intel"]
     if request.args.get("source"):
         items = [i for i in items if i["source"] == request.args["source"]]
-    if q:
-        items = [i for i in items if q in json.dumps(i).lower()]
+    if q:       # the readable fields (a JSON dump escapes quotes and accents, so a title containing either could never match)
+        items = [i for i in items if q in " ".join(str(i.get(k) or "") for k in ("title", "source", "kind", "summary", "url")).lower()]
     return jsonify(total=len(items), items=items[:_int("limit", 120)])
+
+
+# ---- search across everything the dashboard has cached: breaches, gangs, news and alerts
+SEARCH_CAPS = {"breaches": 8, "gangs": 3, "news": 4, "alerts": 3}
+_search_rate = defaultdict(deque)
+
+
+def _search_rank(q, rows):
+    """rows: (item, [(field_text, weight_at_word_start, weight_inside_a_word), ...]) -> [(score, item, only_weak)] best first.
+    Every word typed must be found somewhere in the item. A word scores by the best field it is in (a name beats a gang
+    beats a description; a weight of 0 means that kind of hit does not count), and a name that starts with, or equals,
+    the whole query gets a bonus. only_weak is True when nothing but a description matched."""
+    toks = [t for t in re.split(r"\s+", q.strip().lower()) if t][:6]
+    if not toks:
+        return []
+    pats = [re.compile(r"(?<![a-z0-9])" + re.escape(t)) for t in toks]
+    out = []
+    for item, fields in rows:
+        total, strong, ok = 0, False, True
+        for t, p in zip(toks, pats):
+            best = 0
+            for text, w_word, w_in, *_ in fields:
+                if p.search(text):
+                    best = max(best, w_word)
+                elif t in text:
+                    best = max(best, w_in)
+            if not best:
+                ok = False
+                break
+            strong = strong or best > 5
+            total += best
+        if not ok:
+            continue
+        head = fields[0][0]
+        if head == q.strip().lower():
+            total += 60
+        elif head.startswith(q.strip().lower()):
+            total += 30
+        out.append((total, item, not strong))
+    return out
+
+
+def _f(text, w_word, w_in):
+    """One searchable field: its lower-cased text and how much a hit on a whole word / inside a word is worth."""
+    return ((text or "").lower(), w_word, w_in)
+
+
+def _epoch(s):
+    t = _ts(s)
+    return t.timestamp() if t else 0.0
+
+
+def _victim_fields(v):
+    """What a breach is searched on, best first: its name, the registered name, then gang / website domain / place / region / sector,
+    then the description (weak, and only at the start of a word). Used by the search box and by the UK Victims filter, so both agree."""
+    site = re.sub(r"^https?://", "", v.get("website") or "").split("/")[0]
+    return [_f(v.get("post_title"), 30, 22), _f(v.get("registered_name"), 18, 18),
+            _f(" ".join([v.get("group") or "", site, v.get("town") or "", v.get("force_name") or "",
+                         "" if v["rocu"] == "Unplaced" else v["rocu"], v.get("activity") or ""]), 14, 10),
+            _f(v.get("description"), 3, 0)]
+
+
+@app.get("/api/search")
+def api_search():
+    u = current_user()
+    hist = _search_rate[u["id"] if u and u.get("id") is not None else "legacy"]
+    now = time.time()
+    while hist and now - hist[0] > 60:
+        hist.popleft()
+    if len(hist) >= 300:
+        return jsonify(error="Too many searches: wait a moment."), 429
+    hist.append(now)
+    q = (request.args.get("q") or "").strip()[:200]
+    if re.match(r"https?://", q, re.I):          # a pasted web address: search on its domain (the path is never searched)
+        q = re.sub(r"^https?://", "", q, flags=re.I).split("/")[0].split("?")[0]
+    q = q[:80]
+    if len(q) < 2:
+        return jsonify(q=q, short=True, **{k: {"total": 0, "items": []} for k in SEARCH_CAPS})
+    prev = _prev_visit()
+
+    hits = sorted(_search_rank(q, [(v, _victim_fields(v)) for v in STATE["victims"]]), key=lambda r: (-r[0], -_epoch(r[1].get("seen"))))
+    breaches = []
+    for _, v, weak in hits[:SEARCH_CAPS["breaches"]]:
+        t, fl = _ts(v.get("seen")), v.get("flag")
+        breaches.append({"title": v["post_title"], "group": v.get("group") or "", "sector": v.get("activity") or "", "rocu": v["rocu"],
+                         "town": v.get("town") or "", "force": v.get("force_name") or "", "seen": v.get("seen") or "",
+                         "new": bool(prev and t and t > prev), "fp": bool(fl and fl.get("applied")),
+                         "alloc": (ALLOC.get(v["key"]) or {}).get("initials", ""), "via": "description" if weak else ""})
+
+    grows = [(g, [_f(g.get("name"), 30, 22), _f(g.get("altname"), 26, 20), _f(g.get("description"), 3, 0)]) for g in STATE["gangs"]]
+    ghits = sorted(_search_rank(q, grows), key=lambda r: (-r[0], (r[1].get("name") or "").lower()))
+    by_group = Counter((v.get("group") or "").lower() for v in STATE["victims"]) if ghits else {}
+    gangs = [{"name": g["name"], "altname": g.get("altname") or "", "uk_victims": by_group.get((g["name"] or "").lower(), 0)}
+             for _, g, _ in ghits[:SEARCH_CAPS["gangs"]]]
+
+    nrows = [(n, [_f(n.get("title"), 30, 22), _f(" ".join([n.get("source_name") or "", *(n.get("themes") or []), *(n.get("groups") or [])]), 12, 10),
+                  _f(n.get("summary"), 3, 0)]) for n in STATE["news"]]
+    nhits = sorted(_search_rank(q, nrows), key=lambda r: (-r[0], -_epoch(r[1].get("published"))))
+    news = [{"id": n.get("id"), "title": n.get("title") or "", "source": n.get("source_name") or "", "published": n.get("published") or "", "uk": bool(n.get("uk"))}
+            for _, n, _ in nhits[:SEARCH_CAPS["news"]]]
+
+    # press / leak-post rows only repeat a breach (they are listed under "Where this was sourced from"), so the alerts here are the real alerts
+    arows = [(i, [_f(i.get("title"), 30, 22), _f((i.get("source") or "") + " " + (i.get("kind") or ""), 12, 10), _f(i.get("summary"), 3, 0)])
+             for i in STATE["intel"] if i.get("kind") not in ("press", "leak-post")]
+    ahits = sorted(_search_rank(q, arows), key=lambda r: (-r[0], -_epoch(r[1].get("published"))))
+    alerts = [{"title": i.get("title") or "", "source": i.get("source") or "", "kind": i.get("kind") or "", "published": i.get("published") or ""}
+              for _, i, _ in ahits[:SEARCH_CAPS["alerts"]]]
+
+    return jsonify(q=q, short=False, breaches={"total": len(hits), "items": breaches}, gangs={"total": len(ghits), "items": gangs},
+                   news={"total": len(nhits), "items": news}, alerts={"total": len(ahits), "items": alerts})
 
 
 # ---- dark web news

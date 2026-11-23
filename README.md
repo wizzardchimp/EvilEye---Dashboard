@@ -37,12 +37,48 @@ The list is de-duplicated (the same company claimed again by the same group is o
 classification; victims it has not classified are reported separately as Unclassified, not ranked. Each row shows the
 company with its town or district in brackets, sorts by any column, pages 50 at a time and exports to CSV (respecting the
 region filter). Click a row, or any entry in the Overview "Latest" lists, for the breach details (see below). "New" badges mark victims first seen since your previous visit (a visit starts when
-you open the page more than 30 minutes after the last one).
+you open the page more than 30 minutes after the last one). The filter box matches the same way the top-bar search does (below), so
+"wine", "west midlands" or a website all work, and every word you type must be found.
+
+## Search
+The box in the top bar searches **everything the dashboard has cached**: every breach (UK, overseas and unplaced alike, flagged ones
+too, whatever region is chosen), every gang, every dark web news story and every real alert. Press `/` (on a tab with no box of
+its own) or `Ctrl`/`Cmd`+`K` (anywhere) to jump to it. From two letters on, a list drops down under the box:
+
+- **Breaches** (up to 8, with the true total), **Gangs** (3), **Dark web news** (4) and **Alerts** (3), each row with what you need to
+  recognise it (a breach shows gang, sector, town and region, and how long ago it was first seen, with NEW, false positive and
+  allocated-to badges), and the words you typed picked out in bold.
+- **How it ranks:** every word must be found. A name beats a registered name, which beats the gang, website domain, town, region
+  or sector, which beats the description; the start of a word beats the middle of one; an exact name, then a name that starts with your
+  words, come first; ties go to the most recently seen. A match found only in a description says "in description" and only counts at the
+  start of a word (so "bout" finds Boutinot, not "about"). Only the domain of a website is searched, never its path; a pasted web address
+  is reduced to its domain. Punctuation and brackets are plain text.
+- **Picking one:** a breach opens its details pane, a gang lands on Gang Catalog, a news story on Dark Web News and an alert on Alerts,
+  each already filtered to it (old filters are cleared). "View all N breaches in UK Victims" opens the whole list of matches; it shows
+  every region for that view, without changing the region saved on your account.
+- **Keyboard:** Up/Down (wrapping), Home/End, Enter (with nothing highlighted, the best match), Esc closes the list (a second Esc closes
+  the pane), Tab leaves it. It is a screen-reader combobox (`aria-activedescendant`, grouped options).
+- Press and alert rows that merely repeat a breach (ransomware.live press, RansomLook listings) are not listed on their own: they are
+  under the breach's "Where this was sourced from". The Alerts tab's own text box now matches titles with quotes or accents (it used to
+  search a JSON dump, where a quote or an accent never matched).
+- Each search is one line in the activity log (`all: <words>`, with `-> breach: <name>` etc. if you picked something). Results are
+  never cached by the browser, and each person may make 300 searches a minute. `GET /api/search?q=...`.
 
 ## Phones
 At 640px wide and below (the phone layout) all text is 15% larger: every font size in `style.css` is written as `size * var(--fs)`,
 and `--fs` is 1 normally and 1.15 under 640px. Wider screens are unchanged. Grids now shrink to the screen on very narrow phones
-(320 to 360px) instead of making the page scroll sideways.
+(320 to 360px) instead of making the page scroll sideways. Other phone-layout rules:
+
+- **Header:** logo and name on the left and the four buttons on the same row on the right; then the search box; then "REGION" with the
+  sync status on its right and the region picker full width beneath. About 200px tall, and it scrolls away with the page (on larger
+  screens it stays pinned). The tagline is dropped under 480px, and the smallest phones (340px and under) get slightly smaller buttons.
+  Between 641 and 1099px the search sits on its own row under the brand; at 1100px and wider it shares the row.
+- **Region banner** ("West Midlands only" with Show all UK): one slim line the width of the page; a long region name is shortened with
+  an ellipsis before the button ever is, and the word "Showing" is dropped under 480px.
+- **Chosen region first:** when a region is chosen and the two Overview lists are stacked, "Latest in <region>" is above "Latest UK
+  incidents". Side by side (wide screens) the order is unchanged.
+- **Counts** are a 2 x 2 grid, and the **region tiles** are two columns of identical, compact tiles (the share sits beside the number,
+  and "of UK" is dropped under 420px) so names of one or two lines no longer push their numbers out of line.
 
 ## Breach details
 Clicking a breach (a row in UK Victims, or anywhere on an entry in the Overview "Latest" lists (its name included) opens a details

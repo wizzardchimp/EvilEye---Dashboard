@@ -79,6 +79,7 @@ document.querySelectorAll(".tab").forEach((btn) => btn.addEventListener("click",
 function refreshCurrent() { (TABS[activeTab()] || loadOverview)(); }
 function updateFilterBar() {
   const show = region && REGION_TABS.includes(activeTab());
+  document.body.classList.toggle("has-region", !!region);
   $("#filterbar").hidden = !show;
   if (show) $("#fb-region").textContent = region === "Unplaced" ? "region unknown" : region;
 }
@@ -254,7 +255,7 @@ async function loadOverview() {
       <button type="button" class="rtile${r.region === region ? " active" : ""}${r.region === "Unplaced" || r.region === "Overseas / not UK" ? " dim" : ""}" data-region="${esc(r.region)}" aria-pressed="${r.region === region}" title="Filter the dashboard to ${esc(r.region)}">
         <span class="rn">${r.region === "Unplaced" ? "Region unknown" : esc(r.region)}</span>
         <span class="rc">${r.count}</span>
-        <span class="rs">${(100 * r.count / d.uk_all).toFixed(1)}% of UK</span>
+        <span class="rs">${(100 * r.count / d.uk_all).toFixed(1)}%<span class="rs-of"> of UK</span></span>
         <span class="rbar"><i style="width:${Math.max(3, (r.count / max) * 100)}%"></i></span>
       </button>`).join("") || '<div class="ldr">no data yet</div>';
     $("#region-clear").hidden = !region;
@@ -741,7 +742,7 @@ let fdVictim = null;
 const closeFlag = () => { fdlg.hidden = true; fdVictim = null; };
 const suggestInitials = (name) => { const p = (name || "").split(/[^A-Za-z]+/).filter(Boolean); return (p.length > 1 ? p.slice(0, 3).map((x) => x[0]).join("") : (p[0] || "").slice(0, 2)).toUpperCase(); };
 async function fetchVictim(title) {                          // not region-filtered: a flagged victim may have left the region
-  const d = await api(`/api/victims?${new URLSearchParams({ q: title, limit: "50" })}`);
+  const d = await api(`/api/victims?${new URLSearchParams({ title, limit: "1" })}`);
   return d.items.find((x) => x.post_title === title) || null;
 }
 async function afterMark(title) {
@@ -1175,13 +1176,176 @@ $("#vrefresh").addEventListener("click", loadVictims);
 $("#grefresh").addEventListener("click", loadGangs);
 $("#arefresh").addEventListener("click", loadAlerts);
 
-// keyboard: "/" jumps to the search box of the current tab, Esc closes dialogs
+// ------------------------------------------------------------------ search: every cached breach, gang, news story and alert
+// A type-ahead in the top bar. The server ranks (GET /api/search); picking a breach opens its details pane, picking anything else
+// lands on the right tab already filtered to it.
+const gs = { box: $("#gsearch"), input: $("#gs-input"), pop: $("#gs-pop"), list: $("#gs-list"), foot: $("#gs-foot"), clear: $("#gs-clear"),
+  opts: [], active: -1, seq: 0, ctl: null, data: null, logT: 0 };
+const GS_GROUPS = [
+  { key: "breaches", kind: "breach", label: "Breaches", icon: SEC_ICON.company, tab: "UK Victims" },
+  { key: "gangs", kind: "gang", label: "Gangs", icon: SEC_ICON.gang, tab: "Gang Catalog" },
+  { key: "news", kind: "news", label: "Dark web news", icon: svgI('<path d="M4 5h13a1 1 0 0 1 1 1v13a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2z"/><path d="M18 9h2a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><path d="M8 9h6M8 13h6M8 17h4"/>'), tab: "Dark Web News" },
+  { key: "alerts", kind: "alert", label: "Alerts", icon: svgI('<path d="M12 3 2.5 20h19z"/><path d="M12 10v4.5"/><path d="M12 17.5v.01"/>'), tab: "Alerts" },
+];
+const gsToks = () => gs.input.value.trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, 6);
+function gsHl(text, toks) {            // the typed words picked out in bold; everything is escaped first, so a feed title can never inject markup
+  if (!toks.length) return esc(text);
+  const re = new RegExp("(" + toks.slice().sort((a, b) => b.length - a.length).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "ig");
+  return String(text ?? "").split(re).map((p, i) => (i % 2 ? `<mark>${esc(p)}</mark>` : esc(p))).join("");
+}
+function gsWhere(b) {
+  if (b.rocu === "Unplaced") return "region unknown";
+  if (b.rocu === "Overseas / not UK") return "overseas / not UK";
+  return (b.town ? b.town + ", " : "") + b.rocu;
+}
+function gsRow(kind, it, toks, i) {
+  let title, sub, tags = "";
+  if (kind === "breach") {
+    title = it.title; sub = [it.group, it.sector, gsWhere(it), ago(it.seen)].filter(Boolean).join(" · ");
+    tags = (it.new ? '<span class="badge new">NEW</span>' : "") + (it.fp ? '<span class="badge fp">false positive</span>' : "") + (it.alloc ? `<span class="badge alloc">${ICON_PERSON}${esc(it.alloc)}</span>` : "")
+      + (it.via ? '<span class="gs-via">in description</span>' : "");
+  } else if (kind === "gang") {
+    title = it.name; sub = `${it.altname ? "also known as " + it.altname + " · " : ""}${it.uk_victims} UK victim${it.uk_victims === 1 ? "" : "s"} on record`;
+  } else if (kind === "news") {
+    title = it.title; sub = [it.source, it.published ? fmtDate(it.published) : ""].filter(Boolean).join(" · ");
+  } else {
+    title = it.title; sub = [it.source, it.kind, it.published ? fmtDate(it.published) : ""].filter(Boolean).join(" · ");
+  }
+  return `<div class="gs-o" role="option" id="gs-o${i}" data-i="${i}" aria-selected="false"><span class="gs-main"><span class="gs-t">${gsHl(title, toks)}</span><span class="gs-s">${esc(sub)}</span></span>${tags ? `<span class="gs-tags">${tags}</span>` : ""}</div>`;
+}
+function gsOpen() { gs.pop.hidden = false; gs.input.setAttribute("aria-expanded", "true"); }
+function gsClose() { gs.pop.hidden = true; gs.input.setAttribute("aria-expanded", "false"); gsActive(-1); }
+function gsActive(i, scroll) {
+  gs.active = i;
+  gs.list.querySelectorAll(".gs-o").forEach((el, k) => { const on = k === i; el.classList.toggle("on", on); el.setAttribute("aria-selected", String(on)); if (on && scroll) el.scrollIntoView({ block: "nearest" }); });
+  if (i >= 0) gs.input.setAttribute("aria-activedescendant", `gs-o${i}`); else gs.input.removeAttribute("aria-activedescendant");
+}
+function gsRender(d) {
+  gs.opts = []; gs.active = -1;
+  const toks = gsToks();
+  let html = "", foot = "";
+  if (!d || d.short) {
+    html = '<div class="gs-empty"><strong>Search everything the dashboard has cached.</strong><br>Breaches, gangs, dark web news and alerts. Try a company name, a gang, a town or a website.</div>';
+  } else if (d.error) {
+    html = `<div class="gs-empty" role="alert">Search is unavailable right now: ${esc(d.error)}</div>`;
+  } else {
+    GS_GROUPS.forEach((g) => {
+      const grp = d[g.key];
+      if (!grp || !grp.items.length) return;
+      html += `<div role="group" aria-labelledby="gs-h-${g.key}"><div class="gs-h" id="gs-h-${g.key}"><span class="gs-hi">${g.icon}</span>${g.label}<span class="gs-n">${grp.total > grp.items.length ? `${grp.items.length} of ${grp.total}` : grp.total}</span></div>`;
+      grp.items.forEach((it) => { html += gsRow(g.kind, it, toks, gs.opts.length); gs.opts.push({ kind: g.kind, it, tab: g.tab }); });
+      html += "</div>";
+    });
+    if (!gs.opts.length) html = `<div class="gs-empty">Nothing cached matches <strong>&ldquo;${esc(d.q)}&rdquo;</strong>.<br>Try fewer words, a company name, a gang, a town or a website.</div>`;
+    const more = d.breaches.total - d.breaches.items.length;
+    if (more > 0) foot += `<button type="button" class="gs-all" data-act="all">View all ${d.breaches.total} breaches in UK Victims</button>`;
+  }
+  gs.list.innerHTML = html;
+  gs.list.scrollTop = 0;
+  gs.foot.innerHTML = foot + '<span class="gs-keys">↑ ↓ to move · Enter to open · Esc to close</span>';
+  gs.foot.hidden = false;
+  gsOpen();
+}
+const gsRun = debounce(async () => {
+  const q = gs.input.value.trim();
+  if (q.length < 2) { gs.seq++; if (gs.ctl) gs.ctl.abort(); gs.box.classList.remove("busy"); gs.data = null; gsRender(null); return; }
+  if (gs.ctl) gs.ctl.abort();
+  const ctl = gs.ctl = new AbortController(), seq = ++gs.seq;
+  gs.box.classList.add("busy");
+  try {
+    const d = await api(`/api/search?${new URLSearchParams({ q })}`, { signal: ctl.signal });
+    if (seq !== gs.seq) return;
+    gs.data = d; gsRender(d);
+  } catch (e) {
+    if (e.name === "AbortError" || seq !== gs.seq) return;
+    gs.data = null; gsRender({ error: e.message });
+  } finally { if (seq === gs.seq) gs.box.classList.remove("busy"); }
+}, 150);
+function gsLog(q, outcome) {          // one activity line per search: what was typed (after a pause) or what it led to
+  clearTimeout(gs.logT);
+  if (outcome) track("search", `all: ${q} → ${outcome}`);
+  else if (q) gs.logT = setTimeout(() => track("search", `all: ${q}`), 900);
+}
+function gsPick(i) {
+  const o = gs.opts[i];
+  if (!o) return;
+  const q = gs.input.value.trim();
+  gsClose(); gs.input.blur();
+  if (o.kind === "breach") {
+    gsLog(q, `breach: ${o.it.title}`);
+    fetchVictim(o.it.title).then((v) => (v ? openVictim(v) : toast("Could not find that breach any more.")))
+      .catch((e) => toast("Could not load the breach details: " + e.message));
+  } else if (o.kind === "gang") {
+    gsLog(q, `gang: ${o.it.name}`);
+    $("#gsource").value = ""; document.querySelector('input[name="glive"][value=""]').checked = true; $("#gq").value = o.it.name;
+    showTab("gangs", true);
+  } else if (o.kind === "news") {
+    gsLog(q, `news: ${o.it.title}`);
+    Object.assign(nm, { q: o.it.title, source: "", theme: "", group: "", uk: "" });
+    $("#nq").value = o.it.title; $("#nsource").value = ""; $("#ntheme").value = ""; document.querySelector('input[name="nuk"][value=""]').checked = true;
+    showTab("news", true);
+  } else {
+    gsLog(q, `alert: ${o.it.title}`);
+    $("#asource").value = ""; $("#aq").value = o.it.title;
+    showTab("alerts", true);
+  }
+}
+function gsAll() {
+  const q = gs.input.value.trim();
+  gsLog(q, "all breaches");
+  gsClose(); gs.input.blur();
+  Object.assign(vm, { q, group: "", sector: "", mark: "", page: 0, newOnly: false });
+  $("#vq").value = q; $("#vgroup").value = ""; $("#vsector").value = ""; $("#vmark").value = ""; $("#vnew").checked = false;
+  if (region) { region = ""; $("#region").value = ""; applyRegionChange(false); }          // the search covered the whole UK: show it all (this view only, the saved region is untouched)
+  showTab("victims", true);
+}
+gs.input.addEventListener("input", () => {
+  gs.clear.hidden = !gs.input.value;
+  const q = gs.input.value.trim();
+  if (q.length >= 2) gsLog(q);
+  gsRun();
+});
+gs.input.addEventListener("focus", () => {
+  const q = gs.input.value.trim();
+  if (q.length >= 2 && gs.data && gs.data.q === q) gsRender(gs.data);
+  else if (q.length >= 2) gsRun();                  // the list opens when the results arrive
+  else gsRender(null);
+});
+gs.input.addEventListener("keydown", (e) => {
+  const n = gs.opts.length;
+  if (e.key === "Escape") { if (!gs.pop.hidden) { e.preventDefault(); e.stopPropagation(); gsClose(); } return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (gs.pop.hidden) { gsRender(gs.data && !gs.data.short ? gs.data : null); return; }
+    if (n) gsActive(e.key === "ArrowDown" ? (gs.active + 1) % n : (gs.active <= 0 ? n - 1 : gs.active - 1), true);
+  } else if (e.key === "Home" && n && !gs.pop.hidden && gs.active >= 0) { e.preventDefault(); gsActive(0, true); }
+  else if (e.key === "End" && n && !gs.pop.hidden && gs.active >= 0) { e.preventDefault(); gsActive(n - 1, true); }
+  else if (e.key === "Enter") {
+    e.preventDefault();
+    if (gs.active >= 0) gsPick(gs.active);
+    else if (n && gs.data && gs.data.q === gs.input.value.trim()) gsPick(0);       // Enter with nothing highlighted takes the best match
+  }
+});
+gs.list.addEventListener("mousedown", (e) => e.preventDefault());            // keep the focus in the box so the click is not lost
+gs.foot.addEventListener("mousedown", (e) => e.preventDefault());
+gs.list.addEventListener("click", (e) => { const o = e.target.closest(".gs-o"); if (o) gsPick(+o.dataset.i); });
+gs.list.addEventListener("mousemove", (e) => { const o = e.target.closest(".gs-o"); if (o && +o.dataset.i !== gs.active) gsActive(+o.dataset.i); });
+gs.foot.addEventListener("click", (e) => { if (e.target.closest("[data-act=all]")) gsAll(); });
+gs.clear.addEventListener("click", () => { gs.input.value = ""; gs.clear.hidden = true; gs.input.focus(); gsRun(); });
+document.addEventListener("pointerdown", (e) => { gs.inside = gs.box.contains(e.target); if (!gs.pop.hidden && !gs.inside) gsClose(); });
+document.addEventListener("pointerup", () => setTimeout(() => { gs.inside = false; if (!gs.pop.hidden && !gs.box.contains(document.activeElement)) gsClose(); }, 60));       // and if focus left while the pointer was down, close now
+gs.box.addEventListener("focusout", () => setTimeout(() => { if (!gs.inside && !gs.box.contains(document.activeElement)) gsClose(); }, 0));      // Tab away closes it; a tap inside does not
+const gsFocus = () => { gs.input.focus(); gs.input.select(); };
+
+// keyboard: "/" jumps to the search box of the current tab (or the top-bar search), Ctrl/Cmd+K to the top-bar search from anywhere, Esc closes dialogs
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!modal.hidden) closeModal(); return; }
   if (!obEl.hidden) return;
+  if ((e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) { e.preventDefault(); gsFocus(); return; }
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
   const box = { victims: "#vq", news: "#nq", gangs: "#gq", alerts: "#aq", activity: "#act-q" }[activeTab()];
-  if (box) { e.preventDefault(); $(box).focus(); }
+  e.preventDefault();
+  if (box) $(box).focus(); else gsFocus();
 });
 
 // ------------------------------------------------------------------ keep-screen-on: the shield in the header is the switch
