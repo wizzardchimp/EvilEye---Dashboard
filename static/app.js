@@ -474,6 +474,11 @@ function gangHtml(ctx) {
     <p class="br-gd${g.description ? "" : " meta"}">${esc(g.description || "No description on file for this group.")}</p>
     <button type="button" class="more" data-gang-go="${esc(g.name)}">Show in Gang Catalog</button></div>`;
 }
+// A "Map" button after the registered office: it opens the address in the device's own maps app. Apple Maps on an iPhone, iPad or Mac;
+// Google Maps everywhere else (on Android, and wherever the app is installed, that opens the Google Maps app, otherwise its web page).
+const APPLE_MAPS = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);          // iPadOS and macOS both say "Macintosh"
+const mapsHref = (addr) => (APPLE_MAPS ? `https://maps.apple.com/?q=${encodeURIComponent(addr)}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`);
+const mapBtn = (addr) => `<a class="mapbtn" href="${esc(mapsHref(addr))}" target="_blank" rel="noopener noreferrer" aria-label="Open this address in Maps" title="${APPLE_MAPS ? "Open in Apple Maps" : "Open in Google Maps"}">${SEC_ICON.region}Map</a>`;
 const CO_TYPE = { ltd: "Private limited company", plc: "Public limited company", llp: "Limited liability partnership", "private-unlimited": "Private unlimited company", "private-limited-guarant-nsc": "Private company limited by guarantee" };
 const humanize = (s) => String(s || "").replace(/[-_]/g, " ").replace(/^./, (c) => c.toUpperCase());
 function companyHtml(c) {
@@ -491,7 +496,7 @@ function companyHtml(c) {
   return `<dl class="facts">
       ${fact("Registered as", `<strong>${esc(co.name)}</strong> <span class="meta">No. ${esc(co.number)}</span>`)}
       ${fact("Status", `${esc(humanize(co.status))}${co.type ? ` · ${esc(CO_TYPE[co.type] || humanize(co.type))}` : ""}${co.created ? ` <span class="meta">incorporated ${esc(fmtDate(co.created))}</span>` : ""}`)}
-      ${fact("Registered office", esc(co.address || "Not given"), true)}
+      ${fact("Registered office", co.address ? `${esc(co.address)} ${mapBtn(co.address)}` : "Not given", true)}
       ${fact("Directors", dirs, true)}</dl>
     <div class="br-cofoot">${outLink(c.url, "View on Companies House")} · ${outLink(c.officers_url, "All officers")}
       <div class="meta">According to Companies House, matched to this breach by ${c.matched_by === "name+domain" ? "company name and website" : "company name"}, checked ${esc(ago(c.fetched))}. Not the right company?${search}</div></div>`;

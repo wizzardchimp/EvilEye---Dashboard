@@ -97,7 +97,7 @@ top, and flagging or allocating a breach refreshes it in place without losing yo
   gang"), otherwise a size quoted in the post text ("quoted in the post text"); about 14% of breaches have either, and the
   rest say "Not stated in the post" rather than guessing. A ransom figure is shown exactly as posted.
 - **Company (Companies House)** (card): the company as the register holds it: registered name and number, status and type, date
-  of incorporation, the **registered office address**, the **current directors** (names and appointment dates only; resigned
+  of incorporation, the **registered office address** (with a **Map** button after it that opens the address in the device's own maps app: Apple Maps on an iPhone, iPad or Mac, Google Maps everywhere else, which opens the Google Maps app on Android; the click is logged as an outside link without the address), the **current directors** (names and appointment dates only; resigned
   directors, secretaries, birth dates and home addresses are left out), and links to the company's gov.uk page and its officers
   page. It says how the company was matched to the breach (by name, or by name and website) and offers a Companies House search
   in case it is the wrong one. A breach already placed through the register uses its stored company number; otherwise the

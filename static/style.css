@@ -794,3 +794,10 @@ select.search { flex: 0 1 210px; }
 }
 /* the chosen region leads: when the two lists stack, its list goes above the national one */
 @media (max-width: 733px) { body.has-region .ticker .ticker-col:nth-child(2) { order: -1; } }
+
+/* ---------- the "Map" button after a registered office address ---------- */
+.mapbtn { display: inline-flex; align-items: center; gap: 5px; margin-left: 4px; padding: 2px 11px 2px 8px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface-2);
+  color: var(--link); font-size: calc(12.5px * var(--fs)); font-weight: 600; line-height: 1.5; white-space: nowrap; vertical-align: 1px; text-decoration: none; }
+.mapbtn:hover { border-color: var(--link); text-decoration: none; }
+.mapbtn svg { display: block; width: 14px; height: 14px; }
+@media (max-width: 640px) { .mapbtn { padding: 5px 13px 5px 10px; } }          /* a bigger target for a thumb */
