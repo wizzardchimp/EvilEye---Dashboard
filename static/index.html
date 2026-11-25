@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script src="/static/theme-init.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=79">
+  <link rel="stylesheet" href="/static/style.css?v=81">
 </head>
 <body>
   <header class="topbar">
@@ -292,6 +292,16 @@
         <div id="mk-msg" class="callout err" role="alert" hidden></div>
         <div id="mk-list" class="mk-list"></div>
       </div>
+      <div class="card" id="ea-card">
+        <div class="card-head"><h3>Email alerts</h3><span class="meta">Tell a group by email when a new breach appears in the regions it watches.</span></div>
+        <div id="ea-status" class="callout" hidden></div>
+        <label class="chk ea-master"><input type="checkbox" id="ea-master"> <strong>Send alert emails</strong></label>
+        <p class="hint" id="ea-note"></p>
+        <div id="ea-groups" class="ea-groups"></div>
+        <div class="fd-row"><button type="button" class="more" id="ea-test">Send me a test email</button><span class="hint" id="ea-test-msg" role="status"></span></div>
+        <h3 class="sub" style="margin-top:20px">Recent sends</h3>
+        <div id="ea-log" class="ea-log" role="list"></div>
+      </div>
     </section>
 
     <section id="tab-activity" class="panel">
@@ -417,6 +427,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i><i id="ob-dot3"></i><i id="ob-dot4"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=72"></script>
+  <script src="/static/app.js?v=75"></script>
 </body>
 </html>

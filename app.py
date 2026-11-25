@@ -3,6 +3,7 @@
 Data refresh policy: there is NO background loop. External feeds are fetched only
   * when a signed-in user opens the dashboard and the stored data is stale (STALE_MINUTES), or
   * when a user presses Refresh.
+Email alerts to groups (alerts.py) go out at the end of those refreshes, once the regions have been looked up: they are not on a timer either.
 Users and their activity live in PostgreSQL (DATABASE_URL). Without it the app falls back to a single shared
 password (EVILEYE_PASSWORD) and user management is unavailable.
 """
@@ -33,6 +34,7 @@ from flask import Flask, Response, g, jsonify, redirect, request, send_file, sen
 from PIL import Image
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import alerts
 import db
 import geo
 
@@ -631,6 +633,7 @@ def _ingest():
             STATE["errors"]["snapshot"] = str(e)
     _refreshing = False
     _place()
+    _run_alerts()
 
 
 def _place():
@@ -751,7 +754,7 @@ def current_user():
                       "theme": session.get("theme", "")}
     elif isinstance(uid, int):
         try:
-            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at, must_change, initials, theme from users where id=%s", (uid,))
+            row = db.one("select id, username, role, region, active, password_hash, prev_visit, onboarded_at, must_change, initials, theme, email, email_alerts from users where id=%s", (uid,))
             if row and row["active"] and session.get("pwv") == _pwv(row["password_hash"]):
                 g.user = row
         except Exception:
@@ -768,7 +771,8 @@ def guard():
     if not user:
         if p.startswith("/api/") or p == "/health":
             return jsonify(error="unauthorized"), 401
-        return redirect("/login")
+        want = _open_param(request.args.get("open"))
+        return redirect("/login" + (f"?open={quote(want, safe='')}" if want and p == "/" else ""))
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and p.startswith("/api/") \
             and request.headers.get("X-Requested-With") != "fetch":
         return jsonify(error="bad request"), 400          # CSRF guard: browsers cannot add this cross-site
@@ -841,43 +845,55 @@ def _locked(username, ip):
     return False
 
 
+def _open_param(raw):
+    """The breach a link from an email wants opened: plain text only, 200 characters at most, else nothing."""
+    s = re.sub(r"\s+", " ", raw or "").strip()[:200]
+    return "" if any(unicodedata.category(ch) in ("Cc", "Cf") for ch in s) else s
+
+
 @app.get("/login")
 def login_page():
-    return (BASE / "login.html").read_text(), 200, {"Content-Type": "text/html; charset=utf-8"}
+    page = (BASE / "login.html").read_text()
+    want = _open_param(request.args.get("open"))
+    page = page.replace("<!--open-->", f'<input type="hidden" name="open" value="{htmllib.escape(want, quote=True)}">' if want else "")
+    return page, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.post("/login")
 def login_post():
     username = (request.form.get("username") or "").strip()[:64]
     pw = request.form.get("password") or ""
+    want = _open_param(request.form.get("open"))
+    after = "/?open=" + quote(want, safe="") if want else "/"
+    again = lambda n: f"/login?error={n}" + (f"&open={quote(want, safe='')}" if want else "")
     if LEGACY:
         if PASSWORD and hmac.compare_digest(pw.encode(), PASSWORD.encode()):
             session.clear()
             session.update(uid="legacy", ok=True)
             session.permanent = True
-            return redirect("/")
+            return redirect(after)
         time.sleep(1)
-        return redirect("/login?error=1")
+        return redirect(again(1))
     try:
         bootstrap_admin()
         if _locked(username, _ip()):
             log("login_failed", "locked out (too many attempts)", username=username)
             time.sleep(1)
-            return redirect("/login?error=2")
+            return redirect(again(2))
         row = db.one("select * from users where lower(username)=lower(%s)", (username,))
         ok = check_password_hash(row["password_hash"] if row else DUMMY_HASH, pw) and bool(row) and row["active"]
         if not ok:
             log("login_failed", "disabled account" if row and not row["active"] else "bad credentials", username=username)
             time.sleep(1)
-            return redirect("/login?error=1")
+            return redirect(again(1))
         session.clear()
         session.update(uid=row["id"], pwv=_pwv(row["password_hash"]))
         session.permanent = True
         db.run("update users set last_login=now() where id=%s", (row["id"],))
         log("login", "", user=row)
-        return redirect("/")
+        return redirect(after)
     except Exception:
-        return redirect("/login?error=3")
+        return redirect(again(3))
 
 
 @app.get("/logout")
@@ -952,7 +968,8 @@ def api_me():
     except Exception:
         groups = []
     return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY, groups=groups,
-                   regions=geo.FILTER_REGIONS, initials=u.get("initials") or "", theme=u.get("theme") or "", prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")),
+                   regions=geo.FILTER_REGIONS, initials=u.get("initials") or "", theme=u.get("theme") or "",
+                   email=(u.get("email") or ""), email_alerts=bool(u.get("email_alerts", True)), prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")),
                    must_change=bool(u.get("must_change")))
 
 
@@ -1056,7 +1073,7 @@ def _admin_count_excluding(uid):
 @app.get("/api/admin/users")
 @admin_required
 def admin_users():
-    rows = db.many("""select u.id, u.username, u.role, u.region, u.active, u.created_at, u.created_by, u.last_login,
+    rows = db.many("""select u.id, u.username, u.role, u.region, u.active, u.created_at, u.created_by, u.last_login, u.email, u.email_alerts,
                       (select count(*) from activity a where a.user_id = u.id) as events,
                       (select max(a.ts) from activity a where a.user_id = u.id) as last_activity, u.must_change
                       from users u order by lower(u.username)""")
@@ -1128,6 +1145,23 @@ def admin_user_update(uid):
         sets.append("region=%s")
         vals.append(b["region"])
         notes.append(f"region={b['region'] or 'All UK'}")
+    if "email" in b:
+        if b["email"] in ("", None):
+            sets.append("email=null")
+            notes.append("email cleared")
+        else:
+            addr = alerts.clean_email(b["email"])
+            if not addr:
+                return jsonify(error="That does not look like an email address."), 400
+            sets.append("email=%s")
+            vals.append(addr)
+            notes.append("email set")
+    if "email_alerts" in b:
+        if not isinstance(b["email_alerts"], bool):
+            return jsonify(error="email_alerts must be true or false."), 400
+        sets.append("email_alerts=%s")
+        vals.append(b["email_alerts"])
+        notes.append("alert emails " + ("on" if b["email_alerts"] else "off"))
     if not sets:
         return jsonify(error="Nothing to change."), 400
     db.run(f"update users set {', '.join(sets)} where id=%s", (*vals, uid))
@@ -1290,6 +1324,229 @@ def admin_group_member_remove(gid, uid):
     if row:
         _log_members(g["name"], [], [u["username"]])
     return jsonify(ok=True, changed=bool(row))
+
+
+# ----------------------------------------------------------------- email alerts to groups
+# A group is emailed about breaches placed in the regions it watches, first seen within the last few days, that it has not been told about.
+# Feeds are only read when someone opens the dashboard (see the top of this file), so alerts go out after those refreshes, not on a clock.
+ALERT_LOCK = threading.Lock()
+_alert_pause = {"until": 0.0}                 # after a run in which nothing could be sent, wait before trying again
+_test_hits = defaultdict(deque)
+
+
+def _setting(key, default=""):
+    row = db.one("select value from app_settings where key=%s", (key,))
+    return row["value"] if row else default
+
+
+def _set_setting(key, value):
+    db.run("insert into app_settings (key, value) values (%s, %s) on conflict (key) do update set value=excluded.value", (key, value))
+
+
+def _alerts_on():
+    try:
+        return _setting("alerts_enabled") == "1"
+    except Exception:
+        return False
+
+
+def _email_log(kind, groups, sent, subject, ok, detail):
+    db.run("insert into email_log (kind, group_name, to_count, subject, ok, detail) values (%s,%s,%s,%s,%s,%s)",
+           (kind, alerts.one_line(groups, 200), sent, alerts.one_line(subject, 200), ok, alerts.one_line(detail, 400)))
+
+
+def _baseline(gid, regions, include_unplaced):
+    """Breaches already on the dashboard when a group's alerts start are marked as told, so switching alerts on is not a flood."""
+    uniq = {v["key"]: v for v in alerts.matching(list(STATE["victims"]), regions, include_unplaced, datetime.now(timezone.utc))}
+    if uniq:
+        db.run("insert into alert_sent (victim_key, group_id, victim, kind) select k, %s, t, 'baseline' from unnest(%s::text[], %s::text[]) as x(k, t) on conflict do nothing",
+               (gid, list(uniq), [v["post_title"] for v in uniq.values()]))
+    return len(uniq)
+
+
+def _release(gid, keys):
+    db.run("delete from alert_sent where group_id=%s and kind='pending' and victim_key = any(%s)", (gid, keys))
+
+
+def _run_alerts():
+    """After a refresh and placement: email each person in an alerting group about breaches that are new to their groups. Never raises."""
+    if LEGACY or not alerts.configured() or time.time() < _alert_pause["until"] or not ALERT_LOCK.acquire(blocking=False):
+        return
+    try:
+        db.run("delete from email_log where ts < now() - interval '90 days'")            # keep the tables small
+        db.run("delete from alert_sent where sent_at < now() - interval '120 days'")
+        if not _alerts_on():
+            return
+        db.run("delete from alert_sent where kind='pending' and sent_at < now() - interval '1 hour'")
+        now = datetime.now(timezone.utc)
+        victims = list(STATE["victims"])
+        todo = {}                                              # group id -> (group, its new breaches), each claimed in alert_sent first
+        for gr in db.many("select g.id, g.name, a.regions, a.include_unplaced from group_alerts a join user_groups g on g.id = a.group_id where a.enabled"):
+            cand = {}
+            for v in sorted(alerts.matching(victims, gr["regions"], gr["include_unplaced"], now), key=lambda x: str(x.get("seen") or ""), reverse=True):
+                cand.setdefault(v["key"], v)
+            if not cand:
+                continue
+            done = {r["victim_key"] for r in db.many("select victim_key from alert_sent where group_id=%s and victim_key = any(%s)", (gr["id"], list(cand)))}
+            fresh = [v for k, v in cand.items() if k not in done]
+            if not fresh:
+                continue
+            got = {r["victim_key"] for r in db.many(
+                "insert into alert_sent (victim_key, group_id, victim, kind) select k, %s, t, 'pending' from unnest(%s::text[], %s::text[]) as x(k, t) on conflict do nothing returning victim_key",
+                (gr["id"], [v["key"] for v in fresh], [v["post_title"] for v in fresh]))}
+            fresh = [v for v in fresh if v["key"] in got]
+            if fresh:
+                todo[gr["id"]] = (gr, fresh)
+        if not todo:
+            return
+        people = {}                                            # one email per person, even if several of their groups match
+        for m in db.many("select m.group_id, u.username, u.email from user_group_members m join users u on u.id = m.user_id "
+                         "where u.active and u.email_alerts and u.email is not null and m.group_id = any(%s)", (list(todo),)):
+            addr = alerts.clean_email(m["email"])
+            if not addr:
+                continue
+            who = people.setdefault(addr, {"username": m["username"], "groups": {}, "victims": {}})
+            gr, fresh = todo[m["group_id"]]
+            who["groups"][gr["id"]] = gr["name"]
+            for v in fresh:
+                who["victims"].setdefault(v["key"], v)
+        for gid in set(todo) - {g for w in people.values() for g in w["groups"]}:      # nobody there to tell: leave it for when someone is
+            _release(gid, [v["key"] for v in todo[gid][1]])
+            todo.pop(gid)
+        if not people:
+            return
+        names = ", ".join(sorted({n for w in people.values() for n in w["groups"].values()}, key=str.lower))
+        titles = {v["key"]: v["post_title"] for _, fresh in todo.values() for v in fresh}
+        summary = ", ".join(list(titles.values())[:3]) + (f" and {len(titles) - 3} more" if len(titles) > 3 else "")
+        used = db.one("select coalesce(sum(to_count), 0) as n from email_log where kind='alert' and ts > now() - interval '24 hours'")["n"]
+        if used + len(people) > alerts.DAILY_CAP:
+            for gid, (_, fresh) in todo.items():
+                _release(gid, [v["key"] for v in fresh])
+            _alert_pause["until"] = time.time() + alerts.RETRY_PAUSE
+            _email_log("alert", names, 0, summary, False, f"Not sent: the limit of {alerts.DAILY_CAP} alert emails in 24 hours would be passed ({used} already sent).")
+            return
+        sent, fails, ok_groups = 0, [], set()
+        for i, (addr, who) in enumerate(people.items()):
+            if i:
+                time.sleep(alerts.SEND_GAP)
+            subject, text, body = alerts.compose(list(who["victims"].values()), list(who["groups"].values()), now)
+            ok, why = alerts.send(addr, subject, text, body)
+            if ok:
+                sent += 1
+                ok_groups |= set(who["groups"])
+            else:
+                fails.append(f"{who['username']}: {why}")
+        for gid, (_, fresh) in todo.items():
+            keys = [v["key"] for v in fresh]
+            if gid in ok_groups:
+                db.run("update alert_sent set kind='sent', sent_at=now() where group_id=%s and kind='pending' and victim_key = any(%s)", (gid, keys))
+            else:
+                _release(gid, keys)                            # nothing got through: try again next time
+        if not sent:
+            _alert_pause["until"] = time.time() + alerts.RETRY_PAUSE
+        _email_log("alert", names, sent, summary, not fails, f"{sent} of {len(people)} people emailed" + ("; " + "; ".join(fails[:3]) if fails else ""))
+    except Exception as e:
+        STATE["errors"]["alerts"] = str(e)[:200]
+        _alert_pause["until"] = time.time() + alerts.RETRY_PAUSE
+    finally:
+        ALERT_LOCK.release()
+
+
+@app.get("/api/admin/alerts")
+@admin_required
+def admin_alerts():
+    st = alerts.status()
+    cfg = {r["group_id"]: r for r in db.many("select group_id, enabled, regions, include_unplaced, updated_by, updated_at from group_alerts")}
+    mem = defaultdict(list)
+    for m in db.many("select m.group_id, u.username, u.email, u.email_alerts from user_group_members m join users u on u.id = m.user_id where u.active order by lower(u.username)"):
+        mem[m["group_id"]].append(m)
+    groups = []
+    for gr in db.many("select id, name from user_groups order by lower(name), id"):
+        c, ms = cfg.get(gr["id"]) or {}, mem.get(gr["id"], [])
+        has = lambda m: bool(alerts.clean_email(m["email"] or ""))
+        groups.append({"id": gr["id"], "name": gr["name"], "enabled": bool(c.get("enabled")), "regions": list(c.get("regions") or []),
+                       "include_unplaced": bool(c.get("include_unplaced")), "members": len(ms),
+                       "recipients": sum(1 for m in ms if has(m) and m["email_alerts"]),
+                       "no_email": [m["username"] for m in ms if not has(m)], "opted_out": [m["username"] for m in ms if has(m) and not m["email_alerts"]],
+                       "updated_by": c.get("updated_by", ""), "updated_at": c["updated_at"].isoformat() if c.get("updated_at") else None})
+    used = db.one("select coalesce(sum(to_count), 0) as n from email_log where kind='alert' and ts > now() - interval '24 hours'")["n"]
+    rows = db.many("select ts, kind, group_name, to_count, subject, ok, detail from email_log order by id desc limit 40")
+    return jsonify(configured=st["configured"], reason=st["reason"], sender=st["sender"], public_url=alerts.PUBLIC_URL, enabled=_alerts_on(),
+                   window_days=alerts.RECENT_DAYS, daily_cap=alerts.DAILY_CAP, sent_today=int(used), regions=geo.REGIONS, groups=groups,
+                   log=[{**r, "ts": r["ts"].isoformat()} for r in rows])
+
+
+@app.put("/api/admin/alerts/settings")
+@admin_required
+def admin_alerts_settings():
+    on = (request.get_json(silent=True) or {}).get("enabled")
+    if not isinstance(on, bool):
+        return jsonify(error="enabled must be true or false."), 400
+    if on and not alerts.configured():
+        return jsonify(error="Email sending is not set up yet. " + alerts.status()["reason"]), 409
+    if on and not _alerts_on():            # start from now: what is already on the dashboard is not emailed
+        for gr in db.many("select group_id, regions, include_unplaced from group_alerts where enabled"):
+            _baseline(gr["group_id"], gr["regions"], gr["include_unplaced"])
+    _set_setting("alerts_enabled", "1" if on else "0")
+    log("alerts_settings", "alert emails " + ("on" if on else "off"))
+    return jsonify(enabled=on)
+
+
+@app.put("/api/admin/groups/<int:gid>/alerts")
+@admin_required
+def admin_group_alerts(gid):
+    gr = db.one("select id, name from user_groups where id=%s", (gid,))
+    if not gr:
+        return jsonify(error="No such group."), 404
+    b = request.get_json(silent=True) or {}
+    enabled, regions, inc = b.get("enabled"), b.get("regions", []), b.get("include_unplaced", False)
+    if not isinstance(enabled, bool) or not isinstance(inc, bool) or not isinstance(regions, list) or len(regions) > len(geo.REGIONS) \
+            or any(not isinstance(r, str) or r not in geo.REGIONS for r in regions):
+        return jsonify(error="Choose regions from the list."), 400
+    regions = [r for r in geo.REGIONS if r in set(regions)]
+    if enabled and not regions and not inc:
+        return jsonify(error="Choose at least one region to be emailed about."), 400
+    old = db.one("select enabled, regions, include_unplaced from group_alerts where group_id=%s", (gid,))
+    db.run("insert into group_alerts (group_id, enabled, regions, include_unplaced, updated_by, updated_at) values (%s,%s,%s,%s,%s,now()) "
+           "on conflict (group_id) do update set enabled=excluded.enabled, regions=excluded.regions, include_unplaced=excluded.include_unplaced, updated_by=excluded.updated_by, updated_at=now()",
+           (gid, enabled, regions, inc, current_user()["username"]))
+    widened = not old or not old["enabled"] or bool(set(regions) - set(old["regions"])) or (inc and not old["include_unplaced"])
+    skipped = _baseline(gid, regions, inc) if enabled and widened else 0
+    log("alerts_group", f"{gr['name']}: " + (("on for " + (", ".join(regions) or "no region") + (" and not-yet-placed" if inc else "")) if enabled else "off"))
+    return jsonify(ok=True, already_listed=skipped)
+
+
+@app.post("/api/admin/alerts/test")
+@admin_required
+def admin_alerts_test():
+    u = current_user()
+    if not alerts.configured():
+        return jsonify(error="Email sending is not set up yet. " + alerts.status()["reason"]), 409
+    row = db.one("select email from users where id=%s", (u["id"],))
+    to = alerts.clean_email((row or {}).get("email") or "")
+    if not to:
+        return jsonify(error="Your own account has no email address yet. Add it with the envelope button on your row in Users, then try again."), 400
+    q, now = _test_hits[u["id"]], time.time()
+    while q and now - q[0] > 600:
+        q.popleft()
+    if len(q) >= 5:
+        return jsonify(error="That is enough test emails for now. Try again in a few minutes."), 429
+    q.append(now)
+    subject, text, body = alerts.compose_test()
+    ok, why = alerts.send(to, subject, text, body)
+    _email_log("test", "", 1 if ok else 0, f"Test email to {u['username']}", ok, why)
+    log("alerts_test", "sent" if ok else "failed: " + why)
+    return jsonify(ok=ok, error="" if ok else "The mail service did not accept it: " + why)
+
+
+@app.put("/api/me/email-alerts")
+def api_me_email_alerts():
+    on = (request.get_json(silent=True) or {}).get("on")
+    if LEGACY or not isinstance(on, bool):
+        return jsonify(error="Not available."), 400
+    db.run("update users set email_alerts=%s where id=%s", (on, current_user()["id"]))
+    log("email_alerts", "on" if on else "off")
+    return jsonify(on=on)
 
 
 def _activity_query():

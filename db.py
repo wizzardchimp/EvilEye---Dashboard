@@ -135,6 +135,41 @@ do $$ begin
     insert into app_settings (key, value) values ('markers_migrated', now()::text);
   end if;
 end $$;
+
+-- email alerts: an address per person (set by an admin; optional), and a switch for each person to stop their own
+alter table users add column if not exists email text;
+alter table users add column if not exists email_alerts boolean not null default true;
+-- which regions a group is emailed about
+create table if not exists group_alerts (
+    group_id          integer primary key references user_groups (id) on delete cascade,
+    enabled           boolean not null default false,
+    regions           text[] not null default '{}',
+    include_unplaced  boolean not null default false,
+    updated_by        text not null default '',
+    updated_at        timestamptz not null default now()
+);
+-- which breaches each group has already been told about (or was deliberately not, when alerts were switched on: 'baseline');
+-- 'pending' is a claim held while an email is being sent, so two instances never send the same one twice
+create table if not exists alert_sent (
+    victim_key  text not null,
+    group_id    integer not null references user_groups (id) on delete cascade,
+    victim      text not null default '',
+    kind        text not null default 'sent',
+    sent_at     timestamptz not null default now(),
+    primary key (victim_key, group_id)
+);
+-- one line per alert run or test email: when, to which groups, how many people, and how it went (never an address)
+create table if not exists email_log (
+    id          bigserial primary key,
+    ts          timestamptz not null default now(),
+    kind        text not null,
+    group_name  text not null default '',
+    to_count    integer not null default 0,
+    subject     text not null default '',
+    ok          boolean not null,
+    detail      text not null default ''
+);
+create index if not exists email_log_ts on email_log (ts desc);
 """
 
 

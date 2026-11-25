@@ -217,6 +217,50 @@ for the last two) and `DELETE` the same. The older `/api/victims/alloc` PUT and 
 allocation into a Task marker in the *Allocated* state, with its initials, who set it and its date unchanged. The old `victim_alloc` table is left
 in place and is not read again.
 
+## Email alerts
+**Groups are the recipients.** An admin sets a group's regions in **Settings → Email alerts**; when a new breach appears in one of them,
+everyone in that group who has an email address is emailed. It is off until it is set up and switched on, and nothing is sent in the meantime.
+
+**Setting it up (once).**
+1. Pick a mail service with an HTTPS API. The dashboard speaks Resend's (`POST` JSON with a bearer key), and Railway blocks the ordinary
+   mail ports on its smaller plans, so a web API is the way that always works. Resend's free plan is 3,000 a month, 100 a day.
+2. In the service, add your domain (a subdomain such as `mail.evileye.work` keeps it apart from anything else on the domain). It shows DNS records
+   (SPF, DKIM and usually a DMARC suggestion): add them where the domain's DNS is managed (GoDaddy), and wait for it to say *verified*.
+3. Make an API key and add it in Railway as `EMAIL_API_KEY` yourself (it is a secret: the dashboard only ever reads it from the environment).
+   Add `EMAIL_FROM` (for example `EvilEye <alerts@evileye.work>`) and, if the dashboard is not at `www.evileye.work`, `PUBLIC_URL`.
+4. On the dashboard: **Users** tab, the envelope button on each person's row sets their email address (only an admin can; it can also stop that
+   person's alerts); put people in groups; then **Settings → Email alerts**: tick *Email this group*, choose its regions, **Save**, press
+   **Send me a test email** (to your own address; it needs one first), then switch **Send alert emails** on.
+
+**What is sent, and when.**
+- The dashboard has no timer. Feeds are read when someone opens it and the data is more than 30 minutes old, or when Refresh is pressed, so
+  alert emails go out **after those refreshes** (and after the region lookups that follow them). If nobody opens the dashboard overnight, the
+  emails come when someone does. A breach is only emailed if it was first seen within the last 7 days, so a quiet weekend is covered but a stale
+  backlog never is.
+- A breach is emailed to a group when it is placed in one of the group's regions, was first seen recently, has not been flagged as a false
+  positive, is not overseas, and **that group has not been told about it before**. A breach that is only placed later (the register lookup finds
+  it) is emailed then. A group can also ask for breaches whose region is not known yet.
+- **Switching on is not a flood:** when a group is switched on, or a region added, or the master switch turned on, every matching breach already on
+  the dashboard is set aside as told. Only what arrives after that is sent.
+- **One email per person per refresh.** Someone in two groups that both match gets one email listing everything, with both groups named. Up to 20
+  breaches are listed in an email ("and 5 more" for the rest), newest first. Everyone gets their own message: nobody sees anyone else's address.
+- The email says, for each breach: the name, the gang, the sector, the region and town, when it was first seen, and a link that opens that
+  breach in the dashboard (`/?open=<name>`; if you are signed out it takes you to sign in first and then opens it). **It never contains a
+  leak-site address**, a company website or any free text from the feeds; names are escaped, and a name cannot add a line to the subject.
+- Each person can switch their own alert emails off in their account dialog (the person icon); the Users tab shows who has.
+- If the mail service is down, nothing is lost: the breaches stay unsent, and are tried again after the next refresh (waiting 10 minutes after a
+  run in which nothing at all got through). If one address is refused and others are not, the breach counts as told. At most 200 alert emails in 24
+  hours are sent (`EMAIL_DAILY_CAP`); past that it stops, says so in the log, and carries on when there is room. Log lines older than 90 days and
+  records of what was told older than 120 days are removed.
+- **Recent sends** at the bottom of the card lists each run (the groups, how many people, what about, and if it worked, with the mail service's own
+  reason when it did not) and each test. It never contains an address. The activity log records the settings changes, the tests, and each
+  person's own switch.
+- Stored in PostgreSQL: `users.email` and `users.email_alerts`, `group_alerts` (per group: on or off, regions, include-unplaced), `alert_sent` (which
+  group has been told about which breach, or had it set aside), `email_log` and the master switch in `app_settings` (`alerts_enabled`). Deleting a
+  group removes its settings. API (admin): `GET /api/admin/alerts`; `PUT /api/admin/alerts/settings` `{enabled}`; `PUT /api/admin/groups/<id>/alerts`
+  `{enabled, regions, include_unplaced}`; `POST /api/admin/alerts/test` (to your own address, 5 in 10 minutes); `PATCH /api/admin/users/<id>` also
+  takes `email` and `email_alerts`; `PUT /api/me/email-alerts` `{on}` is a person's own switch.
+
 ## Users and activity (PostgreSQL)
 Accounts live in PostgreSQL (`DATABASE_URL`). The first admin is created from `EVILEYE_ADMIN_USER` (default `admin`) and
 `EVILEYE_PASSWORD` when the users table is empty. After that, admins add, disable, delete and reset users on the
@@ -239,7 +283,7 @@ Accounts live in PostgreSQL (`DATABASE_URL`). The first admin is created from `E
   Clicking a group's name in its card filters the table to its members.
 - Every change is in the activity log (`group_create`, `group_rename`, `group_delete`, `group_members` with who was added and removed).
 - Each person can see their own groups in their account dialog (the person icon in the header). Groups do not change what anyone can see or
-  do yet; they are labels to build on.
+  do; their one job so far is to be the recipients of the alert emails (below).
 - API (admin only): `GET /api/admin/groups`; `POST /api/admin/groups` `{name}`; `PATCH` / `DELETE /api/admin/groups/<id>`;
   `PUT /api/admin/groups/<id>/members` `{user_ids: [...]}` (replace the member list); `PUT` / `DELETE /api/admin/groups/<id>/members/<user id>`
   (add / remove one person, safe to repeat). `GET /api/admin/users` now also returns each person's `group_ids` and the groups.
@@ -310,6 +354,14 @@ entirely. The other headers stay on in both. The default, and any unrecognised v
 | `CSP_MODE` | Optional emergency switch for the Content-Security-Policy: `enforce` (default), `report-only` or `off`. See Security headers. |
 | `CLIENT_IP_HEADER` | Optional, default `X-Real-IP`: the header the host's proxy sets to the visitor's address. Empty to ignore it and use `X-Forwarded-For` only. |
 | `PROXY_HOPS` | Optional, default 2: which entry of `X-Forwarded-For`, counting from the right, is the visitor (Railway writes "visitor, edge"). Only used when `X-Real-IP` is absent. |
+| `EMAIL_API_KEY` | Optional, secret. The API key of the mail service that sends alert emails (see Email alerts). Never shown, logged or stored by the dashboard. |
+| `EMAIL_FROM` | Sender of alert emails, e.g. `EvilEye <alerts@evileye.work>`. The domain must be verified with the mail service. |
+| `PUBLIC_URL` | Optional, default `https://www.evileye.work`. Where the links in alert emails point. |
+| `EMAIL_API_URL` | Optional, default `https://api.resend.com/emails`. Any service with a Resend-style API (POST JSON with a bearer key) works. |
+| `ALERT_RECENT_DAYS` | Optional, default 7. Only breaches first seen within this many days are ever emailed. |
+| `EMAIL_DAILY_CAP` | Optional, default 200. At most this many alert emails in 24 hours (Resend's free plan allows 100 a day). |
+| `EMAIL_SEND_GAP_MS` | Optional, default 600. Pause between one message and the next in a run (Resend allows 2 requests a second). A "slow down" (429) reply is waited out and retried once. |
+| `ALERT_RETRY_SECONDS` | Optional, default 600. After a run in which nothing could be sent, wait this long before trying again. |
 | `STALE_MINUTES` | Optional, default 30. Page-open refresh only if data is older. |
 | `GEO_BUDGET` | Optional, default 400. API lookups per refresh. |
 

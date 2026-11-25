@@ -958,6 +958,7 @@ const EVENT_LABEL = {
   login: "Signed in", login_failed: "Failed sign-in", logout: "Signed out", page_open: "Opened the dashboard", refresh: "Refreshed data",
   tab_view: "Viewed a page", search: "Searched", filter: "Changed a filter", region_change: "Changed region", modal_open: "Opened a breakdown",
   victim_view: "Opened victim details", copy_leak_site: "Copied a leak-site address", link_click: "Clicked an outside link", export: "Exported data",
+  alerts_settings: "Switched alert emails on or off", alerts_group: "Changed a group's alerts", alerts_test: "Sent a test email", email_alerts: "Changed their own alert emails",
   screen_wake_on: "Screen wake on", screen_wake_off: "Screen wake off", screen_wake_failed: "Screen wake failed",
   password_change: "Changed own password", password_change_failed: "Password change failed",
   user_create: "Created a user", user_update: "Updated a user", user_delete: "Deleted a user",
@@ -978,6 +979,7 @@ const genPassword = () => {
   return [...a].map((n) => chars[n % chars.length]).join("");
 };
 const ICONS = {"key": "<path d=\"M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4\"/>", "shield": "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/>", "ban": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"4.93\" y1=\"4.93\" x2=\"19.07\" y2=\"19.07\"/>", "ok": "<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\"/><polyline points=\"22 4 12 14.01 9 11.01\"/>", "trash": "<polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/>"};
+ICONS.mail = '<rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="3 7 12 13 21 7"/>';
 let userCache = [], groupCache = [];
 const uf = { group: "", sort: "name" };                   // the Users screen's view: which group to show, and the order
 const tsOf = (x) => (x ? new Date(x).getTime() : -1);       // never = older than everything
@@ -1022,7 +1024,7 @@ function renderUsers() {
   $("#u-count").textContent = rows.length === userCache.length ? `${rows.length} ${rows.length === 1 ? "person" : "people"}` : `${rows.length} of ${userCache.length} ${userCache.length === 1 ? "person" : "people"}${g ? ` in ${g.name}` : uf.group === "none" ? " in no group" : ""}`;
   body.innerHTML = rows.map((u) => `
       <tr data-id="${u.id}">
-        <td class="who-cell"><div class="who"><span class="nm">${esc(u.username)}${u.username === ME.username ? ' <span class="badge src">you</span>' : ""}</span><span class="meta">created ${fmtDate(u.created_at)}${u.created_by ? ` by ${esc(u.created_by)}` : ""}</span></div></td>
+        <td class="who-cell"><div class="who"><span class="nm">${esc(u.username)}${u.username === ME.username ? ' <span class="badge src">you</span>' : ""}</span><span class="meta">created ${fmtDate(u.created_at)}${u.created_by ? ` by ${esc(u.created_by)}` : ""}</span><span class="meta u-mail${u.email ? "" : " none"}">${u.email ? `${esc(u.email)}${u.email_alerts ? "" : " · alert emails off"}` : "no email address"}</span></div></td>
         <td data-label="Role"><span class="badge ${u.role === "admin" ? "wm" : "uk"}">${esc(u.role)}</span></td>
         <td data-label="Groups" class="ugrp-cell">${groupCell(u)}</td>
         <td data-label="Region"><select class="search u-reg" data-id="${u.id}" aria-label="Region for ${esc(u.username)}">${regionOpts(u.region)}</select></td>
@@ -1030,7 +1032,7 @@ function renderUsers() {
         <td data-label="Last signed in">${lastSignedIn(u)}</td>
         <td data-label="Last active">${lastActive(u)}</td>
         <td class="actions r"><div class="row-actions">
-          ${[["pw", "key", "Reset password", ""], ["role", "shield", u.role === "admin" ? "Make user (remove admin)" : "Make admin", ""],
+          ${[["pw", "key", "Reset password", ""], ["mail", "mail", "Email address and alert emails", ""], ["role", "shield", u.role === "admin" ? "Make user (remove admin)" : "Make admin", ""],
              ["active", u.active ? "ban" : "ok", u.active ? "Disable sign-in" : "Enable sign-in", ""], ["del", "trash", "Delete user", " danger"]]
             .map(([act, ic, label, cls]) => `<button type="button" class="more icon-btn${cls}" data-act="${act}" data-id="${u.id}" title="${label}" aria-label="${label}: ${esc(u.username)}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[ic]}</svg></button>`).join("")}
         </div></td>
@@ -1121,7 +1123,66 @@ function renderMarkerTypes() {
     <span class="badge mk started" style="--mk:${safeColour(t.colour)}" aria-hidden="true">${ICON_PLAY}${esc(t.name.length > 12 ? t.name.slice(0, 11) + "…" : t.name)} AB</span>
     <div class="mkrow-a"><button type="button" class="more" data-mkt="rename" data-id="${t.id}">Rename</button>${t.builtin ? "" : `<button type="button" class="more" data-mkt="${t.active ? "retire" : "use"}" data-id="${t.id}">${t.active ? "Retire" : "Use again"}</button><button type="button" class="more danger" data-mkt="delete" data-id="${t.id}" aria-label="Delete the marker ${esc(t.name)}">Delete</button>`}</div></div>`).join("");
 }
-async function loadSettings() { await loadMarkerTypes(); renderMarkerTypes(); }
+async function loadSettings() { await loadMarkerTypes(); renderMarkerTypes(); loadEmailAlerts(); }
+// ------------------------------------------------------------------ email alerts (Settings): per-group regions, the master switch, a test, the log
+let EA = null;
+function renderEaHead() {
+  const d = EA, st = $("#ea-status");
+  st.hidden = false; st.className = d.configured ? "callout" : "callout err";
+  st.innerHTML = "<span>" + (d.configured
+    ? `Email sending is set up: messages come from <strong>${esc(d.sender)}</strong> and link to <strong>${esc(d.public_url)}</strong>. Only breaches first seen in the last ${d.window_days} days are ever sent, and at most ${d.daily_cap} emails in 24 hours (${d.sent_today} so far).`
+    : `<strong>Email sending is not set up yet.</strong> ${esc(d.reason)} <span class="meta">Add the settings in Railway (EMAIL_API_KEY, EMAIL_FROM, and PUBLIC_URL) and redeploy. The key itself is never shown here.</span>`) + "</span>";
+  $("#ea-master").checked = d.enabled; $("#ea-master").disabled = !d.configured && !d.enabled;
+  $("#ea-note").textContent = d.enabled
+    ? "Alerts are on. They go out after the dashboard reads its feeds (when someone opens it and the data is over 30 minutes old, or someone presses Refresh), not on a timer. Nothing already on the dashboard is sent when a group is switched on."
+    : "Alerts are off: nothing is sent, whatever the groups below say.";
+  $("#ea-test").disabled = !d.configured;
+  $("#ea-log").innerHTML = d.log.length ? d.log.map((r) => `<div class="ea-lr" role="listitem"><div class="ea-lh"><span class="meta">${esc(fmtTime(r.ts))}</span>${r.ok ? '<span class="badge on">sent</span>' : '<span class="badge off">problem</span>'}${r.kind === "test" ? "" : `<span class="meta">${r.to_count} ${r.to_count === 1 ? "person" : "people"}</span>`}</div>
+      <div class="ea-lw">${r.kind === "test" ? "Test email" : esc(r.group_name || "Alert")}</div><div class="meta ea-ls">${esc(r.subject)}</div>${r.detail ? `<div class="meta ea-ls">${esc(r.detail)}</div>` : ""}</div>`).join("") : '<p class="hint" style="margin:0">Nothing sent yet.</p>';
+}
+function renderEaGroups() {
+  const d = EA, box = $("#ea-groups");
+  box.innerHTML = d.groups.length ? d.groups.map((g) => {
+    const warn = g.enabled && !g.recipients;
+    const who = g.members ? `${g.recipients} of ${g.members} ${g.members === 1 ? "member" : "members"} can be emailed.` : "Nobody is in this group yet (add people from the Users tab).";
+    return `<div class="ea-g" data-g="${g.id}"><div class="ea-gh"><strong>${esc(g.name)}</strong><label class="chk"><input type="checkbox" class="ea-on" ${g.enabled ? "checked" : ""}> Email this group about new breaches</label></div>
+      <fieldset class="ea-regions"><legend>Regions to watch</legend><div class="ea-grid">${d.regions.map((r) => `<label class="chk"><input type="checkbox" class="ea-reg" value="${esc(r)}" ${g.regions.includes(r) ? "checked" : ""}> ${esc(r)}</label>`).join("")}</div>
+        <div class="ea-quick"><button type="button" class="more small" data-ea="all">All regions</button><button type="button" class="more small" data-ea="none">None</button></div></fieldset>
+      <label class="chk"><input type="checkbox" class="ea-unp" ${g.include_unplaced ? "checked" : ""}> Also breaches whose region is not known yet</label>
+      <p class="hint ea-who${warn ? " warn" : ""}">${esc(who)}${g.no_email.length ? ` No email address: ${esc(g.no_email.join(", "))}.` : ""}${g.opted_out.length ? ` Switched their own alerts off: ${esc(g.opted_out.join(", "))}.` : ""}${warn ? " Nobody can be emailed yet, so nothing would be sent." : ""}</p>
+      <div class="fd-row"><button type="button" class="btn" data-ea="save">Save</button><span class="meta ea-saved" role="status"></span></div></div>`;
+  }).join("") : '<p class="hint" style="margin:0">No groups yet. Make a group on the Users tab, put people in it, then choose its regions here.</p>';
+}
+async function loadEmailAlerts(headOnly) {
+  try { EA = await api("/api/admin/alerts"); renderEaHead(); if (!headOnly) renderEaGroups(); }
+  catch (e) { $("#ea-status").hidden = false; $("#ea-status").className = "callout err"; $("#ea-status").textContent = e.message; }
+}
+$("#ea-master").addEventListener("change", async (e) => {
+  const on = e.target.checked;
+  try { await api("/api/admin/alerts/settings", { method: "PUT", body: { enabled: on } }); toast(on ? "Alert emails on" : "Alert emails off"); }
+  catch (err) { toast(err.message); }
+  loadEmailAlerts(true);
+});
+$("#ea-groups").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-ea]");
+  if (!b) return;
+  const card = b.closest(".ea-g");
+  if (b.dataset.ea === "all" || b.dataset.ea === "none") { card.querySelectorAll(".ea-reg").forEach((c) => { c.checked = b.dataset.ea === "all"; }); return; }
+  const out = card.querySelector(".ea-saved"), g = EA.groups.find((x) => String(x.id) === card.dataset.g);
+  const body = { enabled: card.querySelector(".ea-on").checked, regions: [...card.querySelectorAll(".ea-reg:checked")].map((c) => c.value), include_unplaced: card.querySelector(".ea-unp").checked };
+  b.disabled = true; out.textContent = "";
+  try {
+    const r = await api(`/api/admin/groups/${card.dataset.g}/alerts`, { method: "PUT", body });
+    toast(body.enabled ? `${g.name}: alerts on${r.already_listed ? `. ${r.already_listed} breach${r.already_listed === 1 ? "" : "es"} already on the dashboard will not be emailed` : ""}` : `${g.name}: alerts off`);
+    await loadEmailAlerts(); const again = $(`#ea-groups .ea-g[data-g="${card.dataset.g}"] .ea-saved`); if (again) again.textContent = "Saved";
+  } catch (err) { out.textContent = err.message; out.classList.add("err"); } finally { b.disabled = false; }
+});
+$("#ea-test").addEventListener("click", async () => {
+  const b = $("#ea-test"), out = $("#ea-test-msg"); b.disabled = true; out.textContent = "Sending…";
+  try { const r = await api("/api/admin/alerts/test", { method: "POST" }); out.textContent = r.ok ? "Sent. Check your inbox (and the spam folder, the first time)." : r.error; }
+  catch (err) { out.textContent = err.message; }
+  finally { b.disabled = false; loadEmailAlerts(true); }
+});
 $("#mk-list").addEventListener("change", async (e) => {
   const pick = e.target.closest(".mk-pick");
   if (!pick) return;
@@ -1258,7 +1319,25 @@ $("#user-rows").addEventListener("click", async (e) => {
   else if (b.dataset.act === "del") {
     if (confirm(`Delete ${u.username}? Their past activity stays in the log.`)) api(`/api/admin/users/${u.id}`, { method: "DELETE" }).then(loadUsers).catch((err) => toast(err.message));
   } else if (b.dataset.act === "pw") passwordDialog(u);
+  else if (b.dataset.act === "mail") emailDialog(u);
 });
+function emailDialog(u) {
+  openModal(); $("#modal-back").hidden = true;
+  $("#modal-title").textContent = `Email: ${u.username}`;
+  $("#modal-explain").textContent = "Where alert emails go for the groups they are in. Only an admin can set it. Leave it empty to remove it.";
+  $("#modal-body").innerHTML = `<form id="emform" class="form-row"><label class="field">Email address<input id="em-addr" class="search" type="email" maxlength="254" value="${esc(u.email || "")}" autocomplete="off" placeholder="name@example.com"></label>
+    <label class="chk"><input type="checkbox" id="em-on" ${u.email_alerts ? "checked" : ""}> Send them alert emails</label>
+    <button class="btn" type="submit">Save</button><button type="button" class="more" id="em-cancel">Cancel</button></form><p id="em-msg" class="hint" role="alert"></p>`;
+  $("#em-addr").focus();
+  $("#em-cancel").addEventListener("click", closeModal);
+  $("#emform").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    busy(ev.target, async () => {
+      try { await api(`/api/admin/users/${u.id}`, { method: "PATCH", body: { email: $("#em-addr").value.trim(), email_alerts: $("#em-on").checked } }); closeModal(); toast(`${u.username}: saved`); loadUsers(); if (!$("#tab-settings").hidden && $("#ea-card")) loadEmailAlerts(); }
+      catch (err) { $("#em-msg").textContent = err.message; }
+    });
+  });
+}
 function passwordDialog(u) {
   openModal(); $("#modal-back").hidden = true;
   $("#modal-title").textContent = `Reset password: ${u.username}`;
@@ -1468,6 +1547,13 @@ $("#usermenu").addEventListener("click", () => {
       <label class="field">Repeat new password<input id="pw-rep" class="search" type="password" minlength="10" required autocomplete="new-password"></label>
       <button class="btn" type="submit">Change password</button></form><p id="mypw-msg" class="hint"></p>`
     : '<p class="hint">The user database is not connected, so accounts and passwords are unavailable. Set DATABASE_URL.</p>';
+  if (ME.database) {
+    $("#modal-body").insertAdjacentHTML("beforeend", `<h3 class="sub" style="margin-top:18px">Email alerts</h3>${ME.email
+      ? `<label class="chk"><input type="checkbox" id="my-ea" ${ME.email_alerts ? "checked" : ""}> Email me about new breaches in my groups</label><p class="hint" style="margin:6px 0 0">Sent to ${esc(ME.email)}. Which regions you hear about is set per group by an admin.</p>`
+      : '<p class="hint" style="margin:0">Your account has no email address, so you get no alert emails. An admin can add one for you.</p>'}`);
+    const ea = $("#my-ea");
+    if (ea) ea.addEventListener("change", async () => { try { await api("/api/me/email-alerts", { method: "PUT", body: { on: ea.checked } }); ME.email_alerts = ea.checked; toast(ea.checked ? "Alert emails on" : "Alert emails off"); } catch (err) { ea.checked = !ea.checked; toast(err.message); } });
+  }
   $("#modal-body").insertAdjacentHTML("beforeend", '<p style="margin-top:14px"><button type="button" class="more" id="show-welcome">Show the welcome tour (look, icon guide, region)</button></p>');
   $("#show-welcome").addEventListener("click", () => { closeModal(); startOnboarding(); });
   const f = $("#mypw");
@@ -1742,6 +1828,15 @@ $("#refresh-now").addEventListener("click", async () => {
   refreshCurrent(); loadTicker(); trackPlacing();
 });
 
+async function openFromLink() {                // a link in an alert email is /?open=<breach name>
+  const want = new URLSearchParams(location.search).get("open");
+  if (!want) return;
+  history.replaceState(null, "", location.pathname + location.hash);
+  try {
+    const v = await fetchVictim(want.slice(0, 200));
+    if (v) { openVictim(v); track("victim_view", `${v.post_title} (from an alert email)`); } else toast("That breach is no longer on the dashboard");
+  } catch (e) { toast("Could not open that breach"); }
+}
 async function init() {
   try { ME = await api("/api/me"); } catch (e) { return; }
   if (ME.database) loadMarkerTypes();
@@ -1758,6 +1853,7 @@ async function init() {
   // record this visit first so "new since your last visit" is measured against the previous one
   let refreshing = false;
   try { const o = await api("/api/open", { method: "POST" }); ME.prev_visit = o.prev_visit; refreshing = o.refreshing; } catch (e) { /* offline: show cached data */ }
+  openFromLink();
   if (h.tab && document.querySelector(`.tab[data-tab="${h.tab}"]`) && h.tab !== "overview") { showTab(h.tab, false); track("tab_view", `${h.tab} (shared link)`); } else { updateFilterBar(); syncHash(); loadOverview(); }
   loadHealth(); loadTicker();
   if (refreshing) await waitForRefresh();
