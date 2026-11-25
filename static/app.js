@@ -1098,6 +1098,16 @@ async function loadLive() {
       : `<p class="hint" style="margin:0">Nothing live${only ? ` in ${esc(region)}` : ""} right now. Review all tasks to see the finished ones.</p>`;
   } catch (e) { /* leave the banner as it was */ }
 }
+const lbKey = $("#lb-key"), lbKeyBtn = $("#lb-legend");
+const keyRow = (cls, label, text) => `<div class="lk-row"><span class="badge mk alloc ${cls}" style="--mk:#44c593">${label}</span><span>${text}</span></div>`;
+lbKey.innerHTML = `<strong>Solid or dotted?</strong>
+  ${keyRow("allocated", ICON_CROWN + "Task JS", "<b>Solid line</b>: someone has it (their initials are on it). A stronger fill and a play icon mean it is in progress.")}
+  ${keyRow("unallocated", ICON_CROWN + "Task", "<b>Dotted line</b> (a dashed edge on the tile): marked as a Task, but nobody has taken it yet.")}
+  ${keyRow("completed", ICON_CROWN + ICON_TICK + "Task", "<b>Dashed line</b>: finished. Only seen in the breach pane and the review, never on this banner.")}`;
+const lbKeyShut = () => { lbKey.hidden = true; lbKeyBtn.setAttribute("aria-expanded", "false"); };
+lbKeyBtn.addEventListener("click", (e) => { e.stopPropagation(); lbKey.hidden = !lbKey.hidden; lbKeyBtn.setAttribute("aria-expanded", String(!lbKey.hidden)); });
+document.addEventListener("click", (e) => { if (!lbKey.hidden && !lbKey.contains(e.target)) lbKeyShut(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !lbKey.hidden) { lbKeyShut(); lbKeyBtn.focus(); } });
 $("#lb-only").addEventListener("change", () => { try { localStorage.setItem("evileye-lb-region", $("#lb-only").checked ? "1" : "0"); } catch (e) { /* ignore */ } loadLive(); });
 $("#lb-list").addEventListener("click", async (e) => {
   const t = e.target.closest(".lb-tile");
