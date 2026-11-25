@@ -138,7 +138,7 @@ def load_marks():
         global MARKER_TYPES, MARKERS, ALLOC
         types = {r["id"]: r for r in db.many("select id, name, colour, builtin, active from marker_types")}
         markers, alloc = {}, {}
-        for r in db.many("select id, key, victim, type_id, initials, allocated_by, allocated_at, started_at, completed_at from victim_markers order by id"):
+        for r in db.many("select id, key, victim, type_id, initials, allocated_by, allocated_at, started_at, completed_at, updated_by, updated_at from victim_markers order by id"):
             markers.setdefault(r["key"], []).append(r)
             if types.get(r["type_id"], {}).get("builtin") and not r["completed_at"]:
                 alloc[r["key"]] = {"initials": r["initials"], "allocated_by": r["allocated_by"], "allocated_at": r["allocated_at"]}
@@ -1957,7 +1957,66 @@ def api_markers_live():
     started = sorted((x for x in items if x["started_at"]), key=lambda x: x["started_at"], reverse=True)
     waiting = sorted((x for x in items if not x["started_at"]), key=lambda x: x["allocated_at"])
     items = started + waiting
-    return jsonify(total=len(items), items=items[:100])
+    return jsonify(total=len(items), items=items[:100], ever=sum(len(ms) for ms in MARKERS.values()))
+
+
+HISTORY_SORTS = ("status", "title", "marker", "who", "allocated", "started", "completed", "took")
+
+
+@app.get("/api/markers/history")
+def api_markers_history():
+    """Every marker, live and finished, for the Task review pop-up. Optional: ?rocu= (one region), ?status= all|live|waiting|started|completed,
+    ?type_id=, ?q= (every word must be found), ?sort= and ?dir=, ?offset= and ?limit= (50, at most 200)."""
+    region, status, q = request.args.get("rocu", ""), request.args.get("status", "all"), " ".join(request.args.get("q", "").lower().split())[:100]
+    sort = request.args.get("sort", "status") if request.args.get("sort", "status") in HISTORY_SORTS else "status"
+    tid = request.args.get("type_id", type=int)
+    now = datetime.now(timezone.utc)
+    by_key = {}
+    for v in STATE["victims"]:
+        by_key.setdefault(v["key"], v)
+    rows = []
+    for key, ms in MARKERS.items():
+        v = by_key.get(key)
+        rocu = v["rocu"] if v else ""
+        if region and rocu != region:
+            continue
+        for m in ms:
+            if tid is not None and m["type_id"] != tid:
+                continue
+            x = {**_marker_view(m), "title": v["post_title"] if v else m["victim"], "group": (v or {}).get("group", ""), "sector": (v or {}).get("activity", ""),
+                 "rocu": rocu, "town": (v or {}).get("town", ""), "updated_by": m.get("updated_by") or "",
+                 "updated_at": m["updated_at"].isoformat() if m.get("updated_at") else None}
+            if q and not all(w in " ".join((x["title"], x["group"], x["sector"], x["name"], x["initials"], x["by"], x["town"], x["rocu"])).lower() for w in q.split()):
+                continue
+            a, s, c = m["allocated_at"], m["started_at"], m["completed_at"]
+            secs = lambda later, earlier: int((later - earlier).total_seconds()) if later and earlier else None
+            x["to_start_s"], x["working_s"], x["to_finish_s"] = secs(s, a), secs(c, s), secs(c, a)
+            x["took_s"] = x["to_finish_s"] if c else secs(now, a)          # a finished task: allocation to completion; a live one: how long so far
+            rows.append(x)
+    counts = {"all": len(rows), "live": sum(1 for x in rows if x["status"] != "completed"), "waiting": sum(1 for x in rows if x["status"] == "allocated"),
+              "started": sum(1 for x in rows if x["status"] == "started"), "completed": sum(1 for x in rows if x["status"] == "completed")}
+    mean = lambda xs: int(sum(xs) / len(xs)) if xs else None
+    avg = {"to_start_s": mean([x["to_start_s"] for x in rows if x["to_start_s"] is not None and x["status"] == "completed"]),
+           "to_finish_s": mean([x["to_finish_s"] for x in rows if x["to_finish_s"] is not None])}
+    if status == "live":
+        rows = [x for x in rows if x["status"] != "completed"]
+    elif status in ("waiting", "started", "completed"):
+        rows = [x for x in rows if x["status"] == {"waiting": "allocated"}.get(status, status)]
+    if sort == "status":                  # what needs attention first: in progress (latest start first), waiting (longest first), then finished (latest first)
+        rows = (sorted((x for x in rows if x["status"] == "started"), key=lambda x: _epoch(x["started_at"]), reverse=True)
+                + sorted((x for x in rows if x["status"] == "allocated"), key=lambda x: _epoch(x["allocated_at"]))
+                + sorted((x for x in rows if x["status"] == "completed"), key=lambda x: _epoch(x["completed_at"]), reverse=True))
+        if request.args.get("dir") == "desc":
+            rows.reverse()
+    else:
+        field = {"title": "title", "marker": "name", "who": "initials", "allocated": "allocated_at", "started": "started_at", "completed": "completed_at", "took": "took_s"}[sort]
+        text, dated = sort in ("title", "marker", "who"), sort in ("allocated", "started", "completed")
+        desc = request.args.get("dir", "asc" if text else "desc") == "desc"
+        have, none = [x for x in rows if x[field] is not None], [x for x in rows if x[field] is None]
+        have.sort(key=(lambda x: (str(x[field]).lower(), x["title"].lower())) if text else (lambda x: _epoch(x[field])) if dated else (lambda x: x[field]), reverse=desc)
+        rows = have + none                # a date that has not happened yet always sorts last
+    off, lim = _int("offset", 0, 10**6), max(1, _int("limit", 50, 200))
+    return jsonify(total=len(rows), offset=off, items=rows[off:off + lim], counts=counts, avg=avg, region=region)
 
 
 # the older allocate API (Task only): kept as it was, now on top of markers

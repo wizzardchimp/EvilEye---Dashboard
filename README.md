@@ -191,9 +191,24 @@ sideways (swipe on a phone) with a fade at the edge as the hint. With a region c
 (your choice is remembered on that browser). It refreshes with the page, every minute, and straight after any change. `GET /api/markers/live`
 (optionally `?rocu=`; at most 100 tiles, with the true total).
 
+**Task review (past and present).** The **Review all tasks** button in the banner opens a pop-up with every task and marker ever put on a breach, live
+and finished, for the region chosen in the header (a menu in the pop-up switches region, or shows All UK, without changing your saved region). It is a table:
+breach (with gang and sector), marker, who, status (Waiting, In progress, Completed), allocated, started, completed, and the time taken (for a finished task, allocation to
+completion; for a live one, how long so far). **Select a row** (or press Enter on its chevron) and it opens out in place with the place, the full dates, who it was allocated
+to and by whom, how long it waited before starting, how long it was worked on, who last changed it, and two buttons: **Open breach details** (the pane opens over the pop-up) and
+**Flag or allocate** (the dialog opens over it; the table refreshes behind it when you change something, and rows stay open). Above the table, count chips
+(All, Live, Waiting, In progress, Completed) filter it and show the numbers, a line gives the average time to start and to finish across the finished tasks, a search box
+finds breaches, gangs, sectors, initials, marker names and the person who set them (every word must match), and a Marker menu narrows it to the Task or one custom marker.
+Click a column heading to sort (again to reverse; a date that has not happened yet always sorts last); the default puts what needs attention first: in progress, then
+waiting (longest first), then finished (latest first). Fifty rows load at a time, with a button for more. A breach that has left the feed keeps its history (listed under All UK)
+but has no pane to open. On a phone the pop-up fills the screen, the table becomes stacked cards and a Sort by menu replaces the headings. The banner stays on the Overview, even
+when nothing is live, once any task has been made, so the review is always reachable. Everyone signed in can use it. `GET /api/markers/history`
+(`?rocu=`, `?status=` all, live, waiting, started or completed, `?type_id=`, `?q=`, `?sort=` status, title, marker, who, allocated, started, completed or took, `?dir=`, `?offset=`, `?limit=`).
+
 **In the lists.** Every live marker is a badge on its breach in the national list, the regional list and the UK Victims table: the Task as a
-person-icon badge with the initials, a custom marker with its name (long names are shortened, the full wording is in the tooltip) and the
-initials; an in-progress marker is drawn with a play icon and a stronger tint. The UK Victims **Show** filter lists *Allocated* (any live marker),
+crown badge with the initials, a custom marker with its name (long names are shortened, the full wording is in the tooltip) and the
+initials; an in-progress marker is drawn with a play icon and a stronger tint. The Task keeps its crown in every state (with a play beside it
+while in progress and a tick once finished); the other markers use a person while waiting, a play and a tick. The UK Victims **Show** filter lists *Allocated* (any live marker),
 *Allocated to me* and *False positives* (the last also finds victims flagged out of the selected region, so they can be reviewed or undone).
 
 **Settings tab (admins only).** Create your own markers, like the Task: type a name (1 to 24 characters, no two the same whatever the capitals),

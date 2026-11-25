@@ -147,12 +147,16 @@ const allocText = (a) => `Allocated to ${a.initials}, set by ${a.by}, ${fmtTime(
 // ---- markers: Task (built in) and custom ones. A marker is live until it is completed.
 const safeColour = (c) => (/^#[0-9a-f]{6}$/i.test(c || "") ? c : "#94a2b7");      // only ever a plain six-digit colour reaches a style attribute
 const MK_STATUS = { allocated: "Allocated", started: "In progress", completed: "Completed" };
+const ICON_CROWN = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" fill-opacity=".25" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18 2 7l5.5 4.5L12 4l4.5 7.5L22 7l-1 11z"/><path d="M4 21.5h16" fill="none"/></svg>';
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>';
 const ICON_TICK = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 12 10 18 20 6"/></svg>';
 const markerText = (m) => (m.builtin ? allocText({ initials: m.initials, by: m.by, at: m.allocated_at }) : `${m.name}: allocated to ${m.initials}, set by ${m.by}, ${fmtTime(m.allocated_at)}`)
   + (m.started_at ? `, started ${fmtTime(m.started_at)}` : "") + (m.completed_at ? `, completed ${fmtTime(m.completed_at)}` : "") + ` (${MK_STATUS[m.status].toLowerCase()})`;
 const mkShort = (n) => (n.length > 12 ? n.slice(0, 11) + "…" : n);        // the same shortening on every badge and in the preview
-const mkBadge = (m) => `<span class="badge${m.builtin ? " alloc" : ""} mk ${m.status}" style="--mk:${safeColour(m.colour)}" title="${esc(markerText(m))}">${m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : ICON_PERSON}${m.builtin ? "" : esc(mkShort(m.name)) + " "}${esc(m.initials)}</span>`;
+// the Task wears a crown (with a play or a tick beside it once it is in progress or done); the others keep the person
+const mkIcon = (m) => (m.builtin ? ICON_CROWN + (m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : "")
+  : m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : ICON_PERSON);
+const mkBadge = (m) => `<span class="badge${m.builtin ? " alloc" : ""} mk ${m.status}" style="--mk:${safeColour(m.colour)}" title="${esc(markerText(m))}">${mkIcon(m)}${m.builtin ? "" : esc(mkShort(m.name)) + " "}${esc(m.initials)}</span>`;
 const liveMarkers = (v) => (v.markers || []).filter((m) => m.status !== "completed");
 const marks = (v, all) => [
   v.flag && v.flag.applied ? `<span class="badge fp" title="${esc(flagText(v.flag))}">false positive</span>` : "",
@@ -764,7 +768,7 @@ async function fetchVictim(title) {                          // not region-filte
   return d.items.find((x) => x.post_title === title) || null;
 }
 async function afterMark(title) {
-  loadTicker(); loadLive(); refreshCurrent();
+  loadTicker(); loadLive(); refreshCurrent(); if (!trdlg.hidden) trLoad(false, true);
   if (!drawer.hidden && drawerVictim && drawerVictim.post_title === title) {
     try { const nv = await fetchVictim(title); if (nv) openVictim(nv, true); } catch (e) { /* leave the drawer as it is */ }
   }
@@ -1066,15 +1070,15 @@ async function loadLive() {
   $("#lb-only-wrap").hidden = !region; $("#lb-region").textContent = region === "Unplaced" ? "region unknown" : region; $("#lb-only").checked = only;
   try {
     const d = await api(`/api/markers/live${only ? "?" + new URLSearchParams({ rocu: region }) : ""}`);
-    bar.hidden = !d.total && !only;
+    bar.hidden = !d.total && !only && !d.ever;
     $("#lb-count").textContent = d.total ? `· ${d.total}` : "";
     const list = $("#lb-list");
     list.innerHTML = d.items.length ? d.items.map((x) => `<button type="button" class="lb-tile ${x.status}" role="listitem" data-title="${esc(x.title)}" style="--mk:${safeColour(x.colour)}" title="${esc(markerText(x))}">
         <span class="lb-name">${esc(x.title)}</span>
-        <span class="lb-row"><span class="badge${x.builtin ? " alloc" : ""} mk ${x.status}" style="--mk:${safeColour(x.colour)}">${x.status === "started" ? ICON_PLAY : ICON_PERSON}${esc(x.name)}</span><b class="lb-ini">${esc(x.initials)}</b><span class="lb-st">${esc(MK_STATUS[x.status])}</span></span>
+        <span class="lb-row"><span class="badge${x.builtin ? " alloc" : ""} mk ${x.status}" style="--mk:${safeColour(x.colour)}">${mkIcon(x)}${esc(x.name)}</span><b class="lb-ini">${esc(x.initials)}</b><span class="lb-st">${esc(MK_STATUS[x.status])}</span></span>
         <span class="lb-meta">${esc(x.rocu === "Unplaced" ? "region unknown" : x.rocu || "no longer in the feed")}${x.town && x.rocu && x.rocu !== "Unplaced" ? " · " + esc(x.town) : ""}</span>
         <span class="lb-meta">allocated ${esc(ago(x.allocated_at))}${x.started_at ? ` · started ${esc(ago(x.started_at))}` : ""}</span></button>`).join("")
-      : `<p class="hint" style="margin:0">Nothing live in ${esc(region)} right now.</p>`;
+      : `<p class="hint" style="margin:0">Nothing live${only ? ` in ${esc(region)}` : ""} right now. Review all tasks to see the finished ones.</p>`;
     lbFade();
   } catch (e) { /* leave the banner as it was */ }
 }
@@ -1090,6 +1094,137 @@ $("#lb-list").addEventListener("click", async (e) => {
   const t = e.target.closest(".lb-tile");
   if (!t) return;
   try { const v = await fetchVictim(t.dataset.title); if (v) openVictim(v); else toast("Could not find that breach any more."); } catch (err) { toast("Could not load the breach details: " + err.message); }
+});
+
+// ------------------------------------------------------------------ the Task review pop-up: every marker, live and finished, for the chosen region
+const trdlg = $("#trdlg");
+const tr = { region: "", status: "all", type: "", q: "", sort: "status", dir: "", items: [], total: 0, open: new Set(), seq: 0, opener: null };
+const TR_COLS = [["title", "Breach"], ["marker", "Marker"], ["who", "Who"], ["status", "Status"], ["allocated", "Allocated"], ["started", "Started"], ["completed", "Completed"], ["took", "Time"]];
+const TR_SORTS = [["status:", "Needs attention first"], ["allocated:desc", "Allocated: newest first"], ["allocated:asc", "Allocated: oldest first"], ["completed:desc", "Completed: newest first"],
+  ["took:desc", "Longest time first"], ["took:asc", "Shortest time first"], ["title:asc", "Breach A to Z"], ["marker:asc", "Marker A to Z"], ["who:asc", "Who A to Z"]];
+const TR_CHIPS = [["all", "All"], ["live", "Live"], ["waiting", "Waiting"], ["started", "In progress"], ["completed", "Completed"]];
+const TR_ST = { allocated: ["wm", "Waiting"], started: ["on", "In progress"], completed: ["src", "Completed"] };
+function secsText(s) {                                  // "5d 2h", "3h 10m", "12m"
+  if (s === null || s === undefined) return "";
+  s = Math.max(0, Math.round(s / 60));
+  const d = Math.floor(s / 1440), h = Math.floor((s % 1440) / 60), m = s % 60;
+  return d ? `${d}d${h ? ` ${h}h` : ""}` : h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
+}
+function fmtShort(iso) {                                // "22 Nov, 12:42" (with the year if it is not this one)
+  const d = new Date(iso), o = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  if (d.getFullYear() !== new Date().getFullYear()) o.year = "numeric";
+  return d.toLocaleString(undefined, o);
+}
+const trMarker = (x) => `<span class="badge${x.builtin ? " alloc" : ""} mk ${x.status}" style="--mk:${safeColour(x.colour)}">${mkIcon(x)}${esc(mkShort(x.name))}</span>`;
+const trDate = (iso) => (iso ? `<div>${esc(fmtShort(iso))}</div><div class="meta">${esc(ago(iso))}</div>` : '<span class="meta">&ndash;</span>');
+function trHead() {
+  $("#tr-head").innerHTML = `<tr>${TR_COLS.map(([k, label]) => {
+    const on = tr.sort === k, dir = on && tr.dir ? (tr.dir === "desc" ? "descending" : "ascending") : "";
+    return `<th${dir ? ` aria-sort="${dir}"` : ""}><button type="button" class="tr-sort${on ? " on" : ""}" data-sort="${k}">${label}<span class="tr-arrow" aria-hidden="true">${on && tr.dir ? (tr.dir === "desc" ? "▾" : "▴") : ""}</span></button></th>`;
+  }).join("")}</tr>`;
+  const cur = `${tr.sort}:${tr.dir}`;
+  $("#tr-sort").innerHTML = (TR_SORTS.some(([v]) => v === cur) ? "" : '<option value="" disabled selected>Custom order</option>') + TR_SORTS.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${l}</option>`).join("");
+}
+function trDetail(x) {
+  const gone = !x.rocu && !x.group;
+  const started = x.started_at ? `${esc(fmtTime(x.started_at))}<div class="meta">after waiting ${esc(secsText(x.to_start_s))}</div>`
+    : x.status === "completed" ? "Not recorded" : `Not started yet<div class="meta">waiting ${esc(secsText(x.took_s))}</div>`;
+  const done = x.completed_at ? `${esc(fmtTime(x.completed_at))}<div class="meta">${x.working_s !== null ? `worked on for ${esc(secsText(x.working_s))} &middot; ` : ""}${esc(secsText(x.to_finish_s))} from allocation to completion</div>` : "Not completed";
+  return `<div class="tr-detail"><dl class="tr-dl">
+      <div><dt>Place</dt><dd>${gone ? "No longer in the feed" : esc(x.rocu === "Unplaced" ? "Region unknown" : x.rocu) + (x.town && x.rocu !== "Unplaced" ? " &middot; " + esc(x.town) : "")}</dd></div>
+      <div><dt>Gang and sector</dt><dd>${esc([x.group, x.sector].filter(Boolean).join(" · ") || "Not known")}</dd></div>
+      <div><dt>Allocated</dt><dd>${esc(fmtTime(x.allocated_at))}<div class="meta">to ${esc(x.initials)}, set by ${esc(x.by)}</div></dd></div>
+      <div><dt>Started</dt><dd>${started}</dd></div>
+      <div><dt>Completed</dt><dd>${done}</dd></div>
+      <div><dt>Last changed</dt><dd>${esc(x.updated_by || x.by)}${x.updated_at ? `<div class="meta">${esc(ago(x.updated_at))}</div>` : ""}</dd></div></dl>
+    <div class="tr-act"><button type="button" class="btn" data-tr="open"${gone ? " disabled" : ""}>Open breach details</button><button type="button" class="more" data-tr="edit"${gone ? " disabled" : ""}>Flag or allocate&hellip;</button>${gone ? '<span class="meta">This breach has left the feed, so it has no details page.</span>' : ""}</div></div>`;
+}
+function trRows(items) {
+  return items.map((x) => {
+    const open = tr.open.has(x.id), [bc, bl] = TR_ST[x.status];
+    return `<tr class="tr-r${open ? " open" : ""}" data-id="${x.id}" data-title="${esc(x.title)}">
+      <td class="tr-name" data-label="Breach"><button type="button" class="tr-tg" aria-expanded="${open}" aria-controls="trx-${x.id}"><svg class="tr-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg><span class="tr-t">${esc(x.title)}</span></button>
+        <div class="meta tr-sub">${esc([x.group, x.sector].filter(Boolean).join(" · "))}</div></td>
+      <td data-label="Marker">${trMarker(x)}</td>
+      <td data-label="Who"><b>${esc(x.initials)}</b><div class="meta">by ${esc(x.by)}</div></td>
+      <td data-label="Status"><span class="badge ${bc}">${x.status === "completed" ? ICON_TICK : x.status === "started" ? ICON_PLAY : ""}${bl}</span></td>
+      <td data-label="Allocated">${trDate(x.allocated_at)}</td><td data-label="Started">${trDate(x.started_at)}</td><td data-label="Completed">${trDate(x.completed_at)}</td>
+      <td data-label="Time"><b>${esc(secsText(x.took_s))}</b>${x.status === "completed" ? "" : '<div class="meta">so far</div>'}</td></tr>
+    <tr class="tr-x" id="trx-${x.id}" data-for="${x.id}"${open ? "" : " hidden"}><td colspan="8">${trDetail(x)}</td></tr>`;
+  }).join("");
+}
+function trChips(c) {
+  $("#tr-chips").innerHTML = TR_CHIPS.map(([k, label]) => `<button type="button" class="tr-chip${tr.status === k ? " on" : ""}" role="radio" aria-checked="${tr.status === k}" data-status="${k}">${label} <b>${c[k]}</b></button>`).join("");
+}
+async function trLoad(more, refresh) {          // more: add the next page; refresh: reload what is showing (after a change), keeping as many rows as were showing
+  const my = ++tr.seq;
+  const qs = new URLSearchParams({ status: tr.status, sort: tr.sort, offset: String(more ? tr.items.length : 0), limit: String(more ? 50 : refresh ? Math.min(200, Math.max(50, tr.items.length)) : 50) });
+  if (tr.region) qs.set("rocu", tr.region);
+  if (tr.type) qs.set("type_id", tr.type);
+  if (tr.q) qs.set("q", tr.q);
+  if (tr.dir) qs.set("dir", tr.dir);
+  try {
+    const d = await api(`/api/markers/history?${qs}`);
+    if (my !== tr.seq) return;                                   // a newer request has been made since
+    tr.items = more ? tr.items.concat(d.items) : d.items; tr.total = d.total;
+    trChips(d.counts); trHead();
+    const where = tr.region ? (tr.region === "Unplaced" ? "region unknown" : tr.region) : "All UK";
+    $("#tr-sub").textContent = `${where}: every task and marker, live and finished. Select a row to see it in full.`;
+    $("#tr-avg").textContent = d.counts.completed ? `On finished tasks: ${d.avg.to_start_s !== null ? `about ${secsText(d.avg.to_start_s)} from allocation to starting, ` : ""}${d.avg.to_finish_s !== null ? `about ${secsText(d.avg.to_finish_s)} from allocation to completion.` : ""}`.replace(/, $/, ".") : "";
+    $("#tr-rows").innerHTML = tr.items.length ? trRows(tr.items)
+      : `<tr><td colspan="8" class="ldr">${tr.q || tr.type || tr.status !== "all" ? "No task matches those filters." : `No task has been allocated${tr.region ? ` in ${esc(where)}` : ""} yet.`}</td></tr>`;
+    $("#tr-count").textContent = tr.items.length ? `Showing ${tr.items.length} of ${tr.total}` : "";
+    $("#tr-more").hidden = tr.items.length >= tr.total;
+    $("#tr-more").textContent = `Show ${Math.min(50, tr.total - tr.items.length)} more`;
+  } catch (e) { if (my === tr.seq) $("#tr-rows").innerHTML = `<tr><td colspan="8" class="ldr">${esc(e.message)}</td></tr>`; }
+}
+function trOpen() {
+  if (!ME || !ME.database) return;
+  tr.opener = document.activeElement; tr.region = region; tr.status = "all"; tr.type = ""; tr.q = ""; tr.sort = "status"; tr.dir = ""; tr.open.clear(); tr.items = [];
+  $("#tr-q").value = "";
+  $("#tr-region").innerHTML = '<option value="">All UK</option>' + (ME.regions || []).map((r) => `<option value="${esc(r)}">${esc(r === "Unplaced" ? "Region unknown" : r)}</option>`).join("");
+  $("#tr-region").value = tr.region;
+  const fillTypes = () => { const keep = tr.type; $("#tr-type").innerHTML = '<option value="">All markers</option>' + MKTYPES.map((t) => `<option value="${t.id}">${esc(t.name)}${t.active ? "" : " (retired)"}</option>`).join(""); $("#tr-type").value = keep; };
+  fillTypes(); loadMarkerTypes().then(fillTypes).catch(() => { /* the list we had will do */ });          // a marker made since the page loaded is offered too
+  trHead(); $("#tr-rows").innerHTML = `<tr><td colspan="8" class="ldr">Loading&hellip;</td></tr>`; $("#tr-chips").innerHTML = ""; $("#tr-avg").textContent = ""; $("#tr-count").textContent = ""; $("#tr-more").hidden = true;
+  trdlg.hidden = false; track("modal_open", "task review"); trLoad(false);
+  $("#tr-q").focus({ preventScroll: true });
+}
+function closeTr() { trdlg.hidden = true; if (tr.opener && document.contains(tr.opener)) tr.opener.focus({ preventScroll: true }); tr.opener = null; }
+$("#lb-review").addEventListener("click", trOpen);
+$("#tr-close").addEventListener("click", closeTr);
+trdlg.addEventListener("click", (e) => { if (e.target === trdlg) closeTr(); });
+$("#tr-q").addEventListener("input", debounce(() => { tr.q = $("#tr-q").value.trim(); trLoad(false); }, 300));
+$("#tr-type").addEventListener("change", () => { tr.type = $("#tr-type").value; trLoad(false); });
+$("#tr-region").addEventListener("change", () => { tr.region = $("#tr-region").value; trLoad(false); });
+$("#tr-sort").addEventListener("change", () => { const [s, d] = $("#tr-sort").value.split(":"); tr.sort = s; tr.dir = d; trLoad(false); });
+$("#tr-more").addEventListener("click", () => trLoad(true));
+$("#tr-chips").addEventListener("click", (e) => { const b = e.target.closest("[data-status]"); if (b) { tr.status = b.dataset.status; trLoad(false); } });
+$("#tr-head").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-sort]");
+  if (!b) return;
+  const k = b.dataset.sort, text = ["title", "marker", "who"].includes(k);
+  if (tr.sort === k) tr.dir = k === "status" ? (tr.dir ? "" : "desc") : tr.dir === "desc" ? "asc" : "desc";
+  else { tr.sort = k; tr.dir = k === "status" ? "" : text ? "asc" : "desc"; }
+  trLoad(false);
+});
+$("#tr-rows").addEventListener("click", async (e) => {
+  const act = e.target.closest("button[data-tr]");
+  if (act) {
+    const title = act.closest(".tr-x") ? tr.items.find((x) => String(x.id) === act.closest(".tr-x").dataset.for).title : "";
+    try {
+      const v = await fetchVictim(title);
+      if (!v) { toast("That breach is no longer on the dashboard."); return; }
+      if (act.dataset.tr === "open") openVictim(v); else openFlag(v);
+    } catch (err) { toast("Could not load the breach: " + err.message); }
+    return;
+  }
+  const row = e.target.closest("tr.tr-r");
+  if (!row || e.target.closest("a")) return;
+  const id = +row.dataset.id, now = !tr.open.has(id);
+  if (now) tr.open.add(id); else tr.open.delete(id);
+  row.classList.toggle("open", now); row.querySelector(".tr-tg").setAttribute("aria-expanded", String(now));
+  $(`#trx-${id}`).hidden = !now;
 });
 
 // ------------------------------------------------------------------ settings: markers (admin)
@@ -1120,7 +1255,7 @@ function renderMarkerTypes() {
     <input type="color" class="mk-pick" value="${safeColour(t.colour)}" aria-label="Colour for ${esc(t.name)}" title="Change the colour">
     <div class="mkrow-main"><strong>${esc(t.name)}</strong>${t.builtin ? ' <span class="badge src">built in</span>' : ""}${t.active ? "" : ' <span class="badge off">retired</span>'}
       <span class="meta">${t.live} live · ${t.total} in total</span></div>
-    <span class="badge mk started" style="--mk:${safeColour(t.colour)}" aria-hidden="true">${ICON_PLAY}${esc(t.name.length > 12 ? t.name.slice(0, 11) + "…" : t.name)} AB</span>
+    <span class="badge mk started" style="--mk:${safeColour(t.colour)}" aria-hidden="true">${mkIcon({ builtin: t.builtin, status: "started" })}${esc(t.name.length > 12 ? t.name.slice(0, 11) + "…" : t.name)} AB</span>
     <div class="mkrow-a"><button type="button" class="more" data-mkt="rename" data-id="${t.id}">Rename</button>${t.builtin ? "" : `<button type="button" class="more" data-mkt="${t.active ? "retire" : "use"}" data-id="${t.id}">${t.active ? "Retire" : "Use again"}</button><button type="button" class="more danger" data-mkt="delete" data-id="${t.id}" aria-label="Delete the marker ${esc(t.name)}">Delete</button>`}</div></div>`).join("");
 }
 async function loadSettings() { await loadMarkerTypes(); renderMarkerTypes(); loadEmailAlerts(); }
@@ -1482,7 +1617,7 @@ function renderObIcons() {
     ]],
     ["On each breach", [
       [`<span class="ob-ibtn">${ICON_FLAG}</span>`, "Flag or allocate", "Mark a breach as a false positive (not in this region, or not in the UK), or put your initials on it to show you are working on it."],
-      [`<span class="badge alloc">${ICON_PERSON}AB</span>`, "Initials badge", "Someone is working on this breach. The letters are their initials."],
+      [`<span class="badge alloc">${ICON_CROWN}AB</span>`, "Task badge", "Someone has the Task on this breach and is working on it. The letters are their initials."],
       [`<span class="badge fp">false positive</span>`, "False positive", "A user flagged it as not belonging here, so it has moved out of the lists. It can be undone."],
       [`<span class="badge new">NEW</span>`, "New", "First seen since your last visit."],
       [`<span class="ob-arrow" aria-hidden="true">\u2197</span>`, "Outside link", "Opens another website in a new tab, such as a news story or Companies House."],
@@ -1614,7 +1749,7 @@ function gsRow(kind, it, toks, i) {
   let title, sub, tags = "";
   if (kind === "breach") {
     title = it.title; sub = [it.group, it.sector, gsWhere(it), ago(it.seen)].filter(Boolean).join(" · ");
-    tags = (it.new ? '<span class="badge new">NEW</span>' : "") + (it.fp ? '<span class="badge fp">false positive</span>' : "") + (it.alloc ? `<span class="badge alloc">${ICON_PERSON}${esc(it.alloc)}</span>` : "")
+    tags = (it.new ? '<span class="badge new">NEW</span>' : "") + (it.fp ? '<span class="badge fp">false positive</span>' : "") + (it.alloc ? `<span class="badge alloc">${ICON_CROWN}${esc(it.alloc)}</span>` : "")
       + (it.via ? '<span class="gs-via">in description</span>' : "");
   } else if (kind === "gang") {
     title = it.name; sub = `${it.altname ? "also known as " + it.altname + " · " : ""}${it.uk_victims} UK victim${it.uk_victims === 1 ? "" : "s"} on record`;
@@ -1751,7 +1886,7 @@ const gsFocus = () => { if (window.scrollY > 0) window.scrollTo(0, 0); gs.input.
 
 // keyboard: "/" jumps to the search box of the current tab (or the top-bar search), Ctrl/Cmd+K to the top-bar search from anywhere, Esc closes dialogs
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!modal.hidden) closeModal(); return; }
+  if (e.key === "Escape") { if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!trdlg.hidden) closeTr(); else if (!modal.hidden) closeModal(); return; }
   if (!obEl.hidden) return;
   if ((e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) { e.preventDefault(); gsFocus(); return; }
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
