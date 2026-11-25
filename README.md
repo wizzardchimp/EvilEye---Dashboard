@@ -86,7 +86,7 @@ and `--fs` is 1 normally and 1.15 under 640px. Wider screens are unchanged. Grid
 ## Breach details
 Clicking a breach (a row in UK Victims, or anywhere on an entry in the Overview "Latest" lists (its name included) opens a details
 panel. It slides in from the right, 780px wide on a desktop (the page stays visible behind it; the full width of a phone), under a
-large title with the gang, sector and region badges and the Flag or allocate button. Below that, **each topic is its own bordered card**
+large title with the gang, sector and region badges, any markers, and the Flag or allocate button. Below that, **each topic is its own bordered card**
 with an icon and a 16px title on a tinted band, and the facts inside are laid out two to a row (one on a phone) with the label above the value,
 so a long breach reads as a handful of short sections rather than one column of text. The panel scrolls, opening another breach starts at the
 top, and flagging or allocating a breach refreshes it in place without losing your place. In order:
@@ -113,7 +113,7 @@ top, and flagging or allocating a breach refreshes it in place without losing yo
   never opened from the dashboard. The extras load from `GET /api/victims/context?title=...`.
 - **Region**: where it was placed and the basis (see Regions (ROCU)), then **Description** (from ransomware.live) and, for admins only, a
   dashed **Admin: set region** card with the manual placement form.
-- **Region** (and how it was decided), the description, flags and allocation, and the admin region editor.
+- **Region** (and how it was decided), the description, flags, the Task and other markers, and the admin region editor.
 
 ## Regions (ROCU)
 ROCUs are groupings of police forces: ROCU > force > organisation. The 43 forces of England and Wales map to 10 ROCUs;
@@ -158,7 +158,7 @@ group, sector and age on the left and the victim's area (town or district, when 
 (its name included) to open the breach details, where the company's own website is linked as "Original site". Entries carry no
 outside links of their own. `/api/ticker?uk=N&reg=N` returns up to 1,500 per list.
 
-## Flags and allocation
+## Flags, tasks and markers
 Every victim (in the Overview tickers, the UK Victims table and the details drawer) has a flag button. Any signed-in user can:
 
 - **Flag a false positive**, as either **Not in <its region>** (a UK victim that is not in that region) or **Not in the UK**,
@@ -167,15 +167,55 @@ Every victim (in the Overview tickers, the UK Victims table and the details draw
   kept underneath, so **Undo flag** (also offered as an Undo link right after flagging) restores it exactly. Only the person
   who flagged it, or an admin, can undo a flag. An admin's manual placement always wins: a manually placed victim cannot be
   flagged, and an existing flag stops applying while a manual placement exists.
-- **Allocate** the victim by putting 2 to 4 letters of initials on it, to show they are working on it. The initials appear as
-  a badge (with who set it and when in its tooltip). Initials can be remembered per user, anyone can take over, and the
-  allocator, the person with those initials, or an admin can release it.
+- **Put a Task on it** (this is the old *Allocate*): 2 to 4 letters of initials, to show they are working on it, and an optional
+  **Allocated on** date and time (left empty it is now; the picker stops at the present, so a task cannot be dated in the future). The
+  dialog then shows a **Task progress** section straight under the allocation banner, with the three dates, the state and the buttons:
+  **Allocated** → **Start now** → **In progress** → **Complete now** → **Completed**, plus **Reopen** (back to in progress) and **Edit dates and
+  initials** for correcting any of the three dates (Started and Completed may be left empty if that has not happened). Dates are checked:
+  it cannot be started before it was allocated, completed before it was started, or dated in the future, and the message says which.
+  Allocating a completed task again starts a fresh cycle. Initials can be remembered per user. Anyone can **take over** a live task (its dates
+  are kept and the new initials go on); only the person who set it, the person with those initials, or an admin can start, complete, edit,
+  reopen or release it, and everyone else is told who can.
+- **Custom markers**: any other marker an admin has created in Settings (below). Each is in the dialog's **Other markers** section as a
+  collapsed row ("not set" or its state) and works exactly like the Task: initials, dates, the same buttons, plus **Remove**. A breach can
+  carry the Task and any number of other markers at once.
 
-The UK Victims **Show** filter lists *Allocated*, *Allocated to me* and *False positives* (the last also finds victims flagged
-out of the selected region, so they can be reviewed or undone). Flags and allocations are stored in PostgreSQL (tables
-`victim_flags` and `victim_alloc`, plus `users.initials`), survive refreshes and restarts, appear in the CSV export
-(`false_positive_flag`, `allocated_to`) and in the activity log (*Flagged a false positive*, *Undid a false-positive flag*,
-*Allocated a victim*, *Released a victim allocation*). Without a database the buttons are hidden.
+A marker is **live** while it is allocated or in progress; once completed it stops showing in the banner and as a badge in the lists, but it is
+kept (and shown in the breach pane and the dialog) as the record of who did it and when.
+
+**The Live tasks banner.** A band across the top of the Overview, above both the national and the regional lists and as wide as the two together,
+shows every live marker as a tile: the marker, the initials, "Allocated" or "In progress", the region and town, and how long ago it was allocated
+and started. Work in progress comes first (the most recently started on the left), then the ones still waiting, the longest waiting first. A
+tile's left edge and badge are in the marker's colour. Click a tile to open that breach's pane. If there are more than fit, the row scrolls
+sideways (swipe on a phone) with a fade at the edge as the hint. With a region chosen, a switch **Only <region>** narrows the banner to that region
+(your choice is remembered on that browser). It refreshes with the page, every minute, and straight after any change. `GET /api/markers/live`
+(optionally `?rocu=`; at most 100 tiles, with the true total).
+
+**In the lists.** Every live marker is a badge on its breach in the national list, the regional list and the UK Victims table: the Task as a
+person-icon badge with the initials, a custom marker with its name (long names are shortened, the full wording is in the tooltip) and the
+initials; an in-progress marker is drawn with a play icon and a stronger tint. The UK Victims **Show** filter lists *Allocated* (any live marker),
+*Allocated to me* and *False positives* (the last also finds victims flagged out of the selected region, so they can be reviewed or undone).
+
+**Settings tab (admins only).** Create your own markers, like the Task: type a name (1 to 24 characters, no two the same whatever the capitals),
+pick one of ten colours or any colour, watch the live preview, and Add. In the list each marker shows its colour (change it with the colour
+box; it saves at once), how many breaches carry it live and in total, and **Rename**, **Retire** / **Use again** and **Delete**. A retired marker
+stays on the breaches that have it and can still be worked on, but cannot be put on anything new. The Task is built in: it can be recoloured
+and renamed but not retired or deleted. A marker that is on any breach cannot be deleted (retire it instead). Colours are checked on the server
+and again in the browser before they reach a style, names are only ever shown as text, and the badge text colour is derived from the marker's
+colour at a fixed lightness per theme so that it reads at 4.5:1 or better whatever colour is chosen (even pure yellow, white or black).
+
+Stored in PostgreSQL (`victim_flags`, `marker_types`, `victim_markers`, plus `users.initials` and `app_settings`); they survive refreshes and
+restarts, appear in the CSV export (`false_positive_flag`, `allocated_to` for the Task's initials and `live_markers` for everything live) and in the
+activity log (*Flagged a false positive*, *Undid a false-positive flag*, *Allocated a victim*, *Released a victim allocation*, *Put a marker on a
+breach*, *Updated a marker*, *Removed a marker*, *Created / Changed / Deleted a marker type*). Without a database the buttons are hidden.
+API: `GET /api/marker-types`; admin `POST /api/admin/marker-types` `{name, colour}` and `PATCH` / `DELETE /api/admin/marker-types/<id>`
+(`{name, colour, active}`); `PUT /api/victims/markers` `{title, type_id?, initials, allocated_at?}` (no `type_id` means the Task; an existing live one is
+taken over); `PATCH` `/api/victims/markers/<id>` `{initials?, allocated_at?, started_at?, completed_at?}` (an ISO time, `"now"`, or `null`
+for the last two) and `DELETE` the same. The older `/api/victims/alloc` PUT and DELETE still work and act on the Task.
+
+*Upgrading:* the first start with markers creates the Task and, once (recorded in `app_settings` as `markers_migrated`), turns every existing
+allocation into a Task marker in the *Allocated* state, with its initials, who set it and its date unchanged. The old `victim_alloc` table is left
+in place and is not read again.
 
 ## Users and activity (PostgreSQL)
 Accounts live in PostgreSQL (`DATABASE_URL`). The first admin is created from `EVILEYE_ADMIN_USER` (default `admin`) and

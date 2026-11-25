@@ -54,7 +54,7 @@ function track(event, detail) {
 const rq = (extra = {}) => { const p = new URLSearchParams(extra); if (region) p.set("rocu", region); return p; };
 
 // ------------------------------------------------------------------ tabs, filter bar and shareable links
-const TABS = { overview: loadOverview, victims: loadVictims, news: loadNews, gangs: loadGangs, alerts: loadAlerts, users: loadUsers, activity: loadActivity };
+const TABS = { overview: loadOverview, victims: loadVictims, news: loadNews, gangs: loadGangs, alerts: loadAlerts, users: loadUsers, activity: loadActivity, settings: () => loadSettings() };
 const REGION_TABS = ["overview", "victims", "gangs"];
 const activeTab = () => document.querySelector(".tab.active").dataset.tab;
 const tabsEl = $("#tabs");
@@ -144,12 +144,24 @@ const ICON_PERSON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none"
 const flagWhat = (f) => (f.kind === "not_uk" ? "not in the UK" : `not in ${f.region}`);
 const flagText = (f) => `Flagged as a false positive by ${f.by} (${flagWhat(f)})${f.note ? `: "${f.note}"` : ""}, ${fmtTime(f.at)}`;
 const allocText = (a) => `Allocated to ${a.initials}, set by ${a.by}, ${fmtTime(a.at)}`;
-const marks = (v) => [
+// ---- markers: Task (built in) and custom ones. A marker is live until it is completed.
+const safeColour = (c) => (/^#[0-9a-f]{6}$/i.test(c || "") ? c : "#94a2b7");      // only ever a plain six-digit colour reaches a style attribute
+const MK_STATUS = { allocated: "Allocated", started: "In progress", completed: "Completed" };
+const ICON_PLAY = '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>';
+const ICON_TICK = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 12 10 18 20 6"/></svg>';
+const markerText = (m) => (m.builtin ? allocText({ initials: m.initials, by: m.by, at: m.allocated_at }) : `${m.name}: allocated to ${m.initials}, set by ${m.by}, ${fmtTime(m.allocated_at)}`)
+  + (m.started_at ? `, started ${fmtTime(m.started_at)}` : "") + (m.completed_at ? `, completed ${fmtTime(m.completed_at)}` : "") + ` (${MK_STATUS[m.status].toLowerCase()})`;
+const mkShort = (n) => (n.length > 12 ? n.slice(0, 11) + "…" : n);        // the same shortening on every badge and in the preview
+const mkBadge = (m) => `<span class="badge${m.builtin ? " alloc" : ""} mk ${m.status}" style="--mk:${safeColour(m.colour)}" title="${esc(markerText(m))}">${m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : ICON_PERSON}${m.builtin ? "" : esc(mkShort(m.name)) + " "}${esc(m.initials)}</span>`;
+const liveMarkers = (v) => (v.markers || []).filter((m) => m.status !== "completed");
+const marks = (v, all) => [
   v.flag && v.flag.applied ? `<span class="badge fp" title="${esc(flagText(v.flag))}">false positive</span>` : "",
-  v.alloc ? `<span class="badge alloc" title="${esc(allocText(v.alloc))}">${ICON_PERSON}${esc(v.alloc.initials)}</span>` : "",
+  ...(all ? v.markers || [] : liveMarkers(v)).map(mkBadge),
 ].filter(Boolean).join(" ");
 const flagBtn = (ref, v) => (ME && ME.database
-  ? `<button type="button" class="flagbtn${v.alloc || (v.flag && v.flag.applied) ? " on" : ""}" data-flag="${ref}" aria-label="Flag or allocate ${esc(v.post_title || v.title)}" title="Flag or allocate">${ICON_FLAG}</button>` : "");
+  ? `<button type="button" class="flagbtn${liveMarkers(v).length || (v.flag && v.flag.applied) ? " on" : ""}" data-flag="${ref}" aria-label="Flag or allocate ${esc(v.post_title || v.title)}" title="Flag or allocate">${ICON_FLAG}</button>` : "");
+let MKTYPES = [];
+async function loadMarkerTypes() { try { MKTYPES = (await api("/api/marker-types")).types; } catch (e) { /* the dialog falls back to Task only */ } }
 let tkItems = { uk: [], reg: [] }, drawerVictim = null;            // what each flag button refers to
 const refVictim = (ref) => { const [src, a, b] = ref.split(":"); return src === "tk" ? tkItems[a][+b] : src === "vt" ? lastVictims[+a] : drawerVictim; };
 
@@ -218,7 +230,7 @@ document.querySelector(".ticker").addEventListener("click", (e) => {
   loadTicker(true);
 });
 // re-read the server cache each minute while the tab is visible, so a refresh done by anyone shows up
-setInterval(() => { if (document.visibilityState === "visible" && activeTab() === "overview") loadTicker(); }, 60000);
+setInterval(() => { if (document.visibilityState === "visible" && activeTab() === "overview") { loadTicker(); loadLive(); } }, 60000);
 
 // ------------------------------------------------------------------ overview
 function pickRegionTile(r) { pickRegion(r === region ? "" : r); }
@@ -233,6 +245,7 @@ function balanceStrip() {
 window.addEventListener("resize", debounce(balanceStrip, 150));
 
 async function loadOverview() {
+  loadLive();
   const holder = $("#stat-cards");
   const [y, g, s, rg] = ["chart-year", "chart-gangs", "chart-sectors", "chart-regions"].map((i) => $(`#${i}`));
   if (!holder.children.length) { y.innerHTML = g.innerHTML = s.innerHTML = sk(6); }
@@ -751,7 +764,7 @@ async function fetchVictim(title) {                          // not region-filte
   return d.items.find((x) => x.post_title === title) || null;
 }
 async function afterMark(title) {
-  loadTicker(); refreshCurrent();
+  loadTicker(); loadLive(); refreshCurrent();
   if (!drawer.hidden && drawerVictim && drawerVictim.post_title === title) {
     try { const nv = await fetchVictim(title); if (nv) openVictim(nv, true); } catch (e) { /* leave the drawer as it is */ }
   }
@@ -759,6 +772,38 @@ async function afterMark(title) {
 async function undoFlag(title, quiet) {
   await api(`/api/victims/flag?title=${encodeURIComponent(title)}`, { method: "DELETE" });
   if (!quiet) toast("Flag removed"); afterMark(title);
+}
+const dtLocal = (iso) => { if (!iso) return ""; const d = new Date(iso), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+const dtIso = (v) => (v ? new Date(v).toISOString() : null);           // a datetime-local field is the browser's own clock
+const canEditMarker = (m) => ME.role === "admin" || ME.username === m.by || (ME.initials || "") === m.initials;
+function markerPanel(v, t, m) {              // the dates of one marker, and what can be done to it
+  const can = canEditMarker(m), none = (x) => `<span class="meta">${x}</span>`;
+  const acts = !can ? `<p class="hint" style="margin:8px 0 0">Only ${esc(m.initials)} (${esc(m.by)}) or an admin can change this.</p>`
+    : `<div class="mk-actions">${m.status === "allocated" ? '<button type="button" class="btn" data-mk="start">Start now</button><button type="button" class="more" data-mk="complete">Complete now</button>'
+      : m.status === "started" ? '<button type="button" class="btn" data-mk="complete">Complete now</button>' : '<button type="button" class="more" data-mk="reopen">Reopen</button>'}
+      <button type="button" class="more" data-mk="edit" aria-expanded="false">Edit dates and initials</button>${t.builtin ? "" : '<button type="button" class="more danger" data-mk="remove">Remove</button>'}</div>
+    <form class="mk-edit" hidden><div class="mk-grid">
+      <label class="field">Initials<input class="search mk-e-ini" maxlength="4" value="${esc(m.initials)}" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+      <label class="field">Allocated<input type="datetime-local" class="search mk-e-alloc" required value="${dtLocal(m.allocated_at)}" max="${dtLocal(new Date().toISOString())}"></label>
+      <label class="field">Started<input type="datetime-local" class="search mk-e-start" value="${dtLocal(m.started_at)}" max="${dtLocal(new Date().toISOString())}"></label>
+      <label class="field">Completed<input type="datetime-local" class="search mk-e-done" value="${dtLocal(m.completed_at)}" max="${dtLocal(new Date().toISOString())}"></label></div>
+      <p class="hint" style="margin:6px 0 10px">Leave Started or Completed empty if that has not happened yet.</p>
+      <div class="fd-row"><button type="submit" class="btn">Save changes</button><button type="button" class="more" data-mk="edit-cancel">Cancel</button></div></form>`;
+  return `<div class="mkp" data-m="${m.id}" data-t="${t.id}"><dl class="mk-dates">
+    <div><dt>Allocated</dt><dd>${esc(m.initials)} <span class="meta">set by ${esc(m.by)}</span><br><span class="meta">${esc(fmtTime(m.allocated_at))}</span></dd></div>
+    <div><dt>Started</dt><dd>${m.started_at ? esc(fmtTime(m.started_at)) : none("Not started")}</dd></div>
+    <div><dt>Completed</dt><dd>${m.completed_at ? esc(fmtTime(m.completed_at)) : none("Not completed")}</dd></div></dl>${acts}</div>`;
+}
+function markerBlock(v, t, m) {              // one custom marker: allocate it, or see and move it along
+  const initial = ME.initials || suggestInitials(ME.username), col = safeColour(t.colour);
+  const form = (label) => `<div class="fd-row mk-new"><label class="field">Initials<input class="search fd-init mk-ini" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(initial)}"></label>
+    <label class="field">Allocated on (optional)<input type="datetime-local" class="search mk-when" max="${dtLocal(new Date().toISOString())}"></label>
+    <button type="button" class="btn" data-mk="put" data-t="${t.id}">${label}</button></div>`;
+  const state = m ? ` <span class="badge mk ${m.status}" style="--mk:${col}">${esc(MK_STATUS[m.status])} · ${esc(m.initials)}</span>` : ' <span class="meta">not set</span>';
+  const body = !m ? form("Allocate")
+    : markerPanel(v, t, m) + (m.status === "completed" ? `<p class="hint" style="margin:12px 0 6px">Start it again:</p>${form("Allocate again")}`
+      : canEditMarker(m) ? "" : `<p class="hint" style="margin:12px 0 6px">Or take it over:</p>${form("Take over")}`);
+  return `<details class="mkb" data-t="${t.id}" style="--mk:${col}" ${m && m.status !== "completed" ? "open" : ""}><summary><span class="mk-dot" aria-hidden="true"></span><strong>${esc(t.name)}</strong>${state}</summary>${body}</details>`;
 }
 function openFlag(v) {
   if (!v) return;
@@ -769,7 +814,7 @@ function openFlag(v) {
   const canUndo = f && (isAdmin || ME.username === f.by);
   const canRelease = a && (isAdmin || ME.username === a.by || (ME.initials || "") === a.initials);
   const status = [
-    f ? `<div class="fd-status fp"><div class="fd-st-text"><strong>Flagged as a false positive</strong> by ${esc(f.by)}: ${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""}. <span class="meta">${esc(fmtTime(f.at))}</span>${f.applied ? "" : `<br><span class="meta">Not in effect right now: ${v.manual ? "an admin set this region by hand" : "the automatic region has changed since"}.</span>`}${canUndo ? "" : `<br><span class="meta">Only the person who flagged it (${esc(f.by)}) or an admin can undo this.</span>`}</div>${canUndo ? '<button type="button" class="more" id="fd-unflag">Undo flag</button>' : ""}</div>` : "",
+    f ? `<div class="fd-status fp"><div class="fd-st-text"><strong>Flagged as a false positive</strong> by ${esc(f.by)}: ${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""}. <span class="meta">${esc(fmtTime(f.at))}</span>${f.applied ? "" : `<br><span class="meta">Not in effect right now: ${v.manual ? "an admin set this region by hand" : "the automatic region has changed since"}.</span>`}${canUndo ? "" : `<br><span class="meta">Only the person who flagged it (${esc(f.by)}) or an admin can undo this flag.</span>`}</div>${canUndo ? '<button type="button" class="more" id="fd-unflag">Undo flag</button>' : ""}</div>` : "",
     a ? `<div class="fd-status al"><div class="fd-st-text"><strong>Allocated to ${esc(a.initials)}</strong>, set by ${esc(a.by)}. <span class="meta">${esc(fmtTime(a.at))}</span>${canRelease ? "" : `<br><span class="meta">Only the person who allocated it (${esc(a.by)}), ${esc(a.initials)} or an admin can release this.</span>`}</div>${canRelease ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
   ].join("");
   const placedNow = placed(v), canFlag = !f && !v.manual && v.rocu !== "Overseas / not UK";
@@ -786,9 +831,14 @@ function openFlag(v) {
   const allocSection = `<div class="fd-sect"><h4>${a ? "Take over" : "Allocate"}</h4>
       <p class="hint">${a ? `Currently ${esc(a.initials)}. Put your own initials on it to take over.` : "Put your initials on this victim to show you are working on it."}</p>
       <div class="fd-row"><label class="field">Initials<input id="fd-init" class="search fd-init" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(initial)}"></label>
+        <label class="field">Allocated on (optional)<input id="fd-when" type="datetime-local" class="search" max="${dtLocal(new Date().toISOString())}"></label>
         <label class="chk"><input type="checkbox" id="fd-remember" ${ME.initials ? "" : "checked"}> Remember as mine</label>
         <button type="button" class="btn" id="fd-alloc">${a ? "Take over" : "Allocate"}</button></div></div>`;
-  $("#fd-body").innerHTML = `${status}${fpSection}${allocSection}<p class="fd-msg" id="fd-msg" role="alert"></p>`;
+  const taskT = MKTYPES.find((t) => t.builtin), taskM = taskT && (v.markers || []).find((m) => m.type_id === taskT.id);
+  const progress = taskM ? `<div class="fd-sect" style="--mk:${safeColour(taskM.colour)}"><h4>Task progress <span class="badge mk ${taskM.status}" style="--mk:${safeColour(taskM.colour)}">${esc(MK_STATUS[taskM.status])}</span></h4>${markerPanel(v, taskT, taskM)}</div>` : "";
+  const customs = MKTYPES.filter((t) => !t.builtin && (t.active || (v.markers || []).some((m) => m.type_id === t.id)));
+  const others = customs.length ? `<div class="fd-sect"><h4>Other markers</h4><p class="hint">Each works like the Task: initials, then when it was allocated, started and completed. It shows in the live banner until it is completed.</p>${customs.map((t) => markerBlock(v, t, (v.markers || []).find((m) => m.type_id === t.id))).join("")}</div>` : "";
+  $("#fd-body").innerHTML = `${status}${progress}${fpSection}${allocSection}${others}<p class="fd-msg" id="fd-msg" role="alert"></p>`;
   fdlg.hidden = false;
   const msg = (t) => { $("#fd-msg").textContent = t || ""; };
   const run = async (fn, ok) => { msg(""); try { await fn(); closeFlag(); afterMark(title); ok(); } catch (e) { msg(e.message); } };
@@ -805,14 +855,60 @@ function openFlag(v) {
   $("#fd-alloc").addEventListener("click", () => {
     const initials = $("#fd-init").value.trim().toUpperCase();
     if (!/^[A-Z]{2,4}$/.test(initials)) { msg("Initials must be 2 to 4 letters."); $("#fd-init").focus(); return; }
-    const remember = $("#fd-remember").checked;
-    run(async () => { await api("/api/victims/alloc", { method: "PUT", body: { title, initials, remember } }); if (remember || !ME.initials) ME.initials = initials; },
+    const remember = $("#fd-remember").checked, when = dtIso($("#fd-when").value);
+    run(async () => { await api("/api/victims/markers", { method: "PUT", body: { title, initials, remember, ...(when ? { allocated_at: when } : {}) } }); if (remember || !ME.initials) ME.initials = initials; },
       () => toast(`Allocated to ${initials}.`));
   });
   $("#fd-init").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#fd-alloc").click(); } });
   (document.querySelector('#fd-body input[name="fp"]') || $("#fd-init")).focus();
   track("modal_open", "flag or allocate");
 }
+// the Task progress and other-marker controls: one handler for the whole dialog, refreshing it in place
+async function refreshFlagDialog(title) {
+  const card = document.querySelector(".fd-card"), top = card ? card.scrollTop : 0;
+  const nv = await fetchVictim(title);
+  afterMark(title);
+  if (nv) { openFlag(nv); if (card) card.scrollTop = top; }
+}
+$("#fd-body").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-mk]");
+  if (!btn || !fdVictim) return;
+  const title = fdVictim.post_title || fdVictim.title, panel = btn.closest(".mkp"), act = btn.dataset.mk;
+  const msg = (t) => { $("#fd-msg").textContent = t || ""; };
+  if (act === "edit") { const f = panel.querySelector(".mk-edit"); f.hidden = !f.hidden; btn.setAttribute("aria-expanded", String(!f.hidden)); if (!f.hidden) f.querySelector("input").focus(); return; }
+  if (act === "edit-cancel") { const f = panel.querySelector(".mk-edit"); f.hidden = true; panel.querySelector('[data-mk="edit"]').setAttribute("aria-expanded", "false"); return; }
+  msg("");
+  btn.disabled = true;
+  try {
+    if (act === "put") {
+      const box = btn.closest(".mk-new"), initials = box.querySelector(".mk-ini").value.trim().toUpperCase(), when = dtIso(box.querySelector(".mk-when").value);
+      if (!/^[A-Z]{2,4}$/.test(initials)) { msg("Initials must be 2 to 4 letters."); box.querySelector(".mk-ini").focus(); return; }
+      await api("/api/victims/markers", { method: "PUT", body: { title, type_id: +btn.dataset.t, initials, ...(when ? { allocated_at: when } : {}) } });
+      toast("Marker set");
+    } else {
+      const id = panel.dataset.m;
+      if (act === "remove") { if (!confirm("Remove this marker from the breach? Its dates are lost.")) return; await api(`/api/victims/markers/${id}`, { method: "DELETE" }); toast("Marker removed"); }
+      else {
+        const body = act === "start" ? { started_at: "now" } : act === "complete" ? { completed_at: "now" } : { completed_at: null };
+        await api(`/api/victims/markers/${id}`, { method: "PATCH", body });
+        toast(act === "start" ? "Started" : act === "complete" ? "Completed" : "Reopened");
+      }
+    }
+    await refreshFlagDialog(title);
+  } catch (err) { msg(err.message); } finally { btn.disabled = false; }
+});
+$("#fd-body").addEventListener("submit", async (e) => {
+  const form = e.target.closest(".mk-edit");
+  if (!form) return;
+  e.preventDefault();
+  const title = fdVictim.post_title || fdVictim.title, id = form.closest(".mkp").dataset.m, msg = (t) => { $("#fd-msg").textContent = t || ""; };
+  const ini = form.querySelector(".mk-e-ini").value.trim().toUpperCase();
+  if (!/^[A-Z]{2,4}$/.test(ini)) { msg("Initials must be 2 to 4 letters."); return; }
+  try {
+    await api(`/api/victims/markers/${id}`, { method: "PATCH", body: { initials: ini, allocated_at: dtIso(form.querySelector(".mk-e-alloc").value), started_at: dtIso(form.querySelector(".mk-e-start").value), completed_at: dtIso(form.querySelector(".mk-e-done").value) } });
+    toast("Saved"); await refreshFlagDialog(title);
+  } catch (err) { msg(err.message); }
+});
 $("#dr-body").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-gang-go]");
   if (!b) return;
@@ -865,6 +961,8 @@ const EVENT_LABEL = {
   screen_wake_on: "Screen wake on", screen_wake_off: "Screen wake off", screen_wake_failed: "Screen wake failed",
   password_change: "Changed own password", password_change_failed: "Password change failed",
   user_create: "Created a user", user_update: "Updated a user", user_delete: "Deleted a user",
+  marker_set: "Put a marker on a breach", marker_update: "Updated a marker", marker_clear: "Removed a marker",
+  marker_type_create: "Created a marker type", marker_type_update: "Changed a marker type", marker_type_delete: "Deleted a marker type",
   group_create: "Created a group", group_rename: "Renamed a group", group_delete: "Deleted a group", group_members: "Changed a group's members",
   placement_set: "Set a victim's region", placement_clear: "Cleared a manual region",
   victim_flag: "Flagged a false positive", victim_flag_clear: "Undid a false-positive flag", victim_alloc: "Allocated a victim", victim_alloc_clear: "Released a victim allocation",
@@ -951,14 +1049,106 @@ async function loadUsers() {
     renderGroups(); renderUsers();
   } catch (e) { body.innerHTML = `<tr><td colspan="8" class="ldr">${esc(e.message)}</td></tr>`; }
 }
-// ------------------------------------------------------------------ groups: named sets of people
-const gMsg = (text) => { const m = $("#g-msg"); m.hidden = !text; m.textContent = text || ""; };
 const busy = async (form, fn) => {            // one request at a time per form: a double click must not send it twice
   const btn = form.querySelector("button[type=submit]");
   if (btn.disabled) return;
   btn.disabled = true;
   try { await fn(); } finally { btn.disabled = false; }
 };
+// ------------------------------------------------------------------ the live-tasks banner (Overview, above the two lists)
+const lbOnly = () => { try { return localStorage.getItem("evileye-lb-region") === "1"; } catch (e) { return false; } };
+async function loadLive() {
+  const bar = $("#livebar");
+  if (!ME || !ME.database) { bar.hidden = true; return; }
+  const only = !!region && lbOnly();
+  $("#lb-only-wrap").hidden = !region; $("#lb-region").textContent = region === "Unplaced" ? "region unknown" : region; $("#lb-only").checked = only;
+  try {
+    const d = await api(`/api/markers/live${only ? "?" + new URLSearchParams({ rocu: region }) : ""}`);
+    bar.hidden = !d.total && !only;
+    $("#lb-count").textContent = d.total ? `· ${d.total}` : "";
+    const list = $("#lb-list");
+    list.innerHTML = d.items.length ? d.items.map((x) => `<button type="button" class="lb-tile ${x.status}" role="listitem" data-title="${esc(x.title)}" style="--mk:${safeColour(x.colour)}" title="${esc(markerText(x))}">
+        <span class="lb-name">${esc(x.title)}</span>
+        <span class="lb-row"><span class="badge${x.builtin ? " alloc" : ""} mk ${x.status}" style="--mk:${safeColour(x.colour)}">${x.status === "started" ? ICON_PLAY : ICON_PERSON}${esc(x.name)}</span><b class="lb-ini">${esc(x.initials)}</b><span class="lb-st">${esc(MK_STATUS[x.status])}</span></span>
+        <span class="lb-meta">${esc(x.rocu === "Unplaced" ? "region unknown" : x.rocu || "no longer in the feed")}${x.town && x.rocu && x.rocu !== "Unplaced" ? " · " + esc(x.town) : ""}</span>
+        <span class="lb-meta">allocated ${esc(ago(x.allocated_at))}${x.started_at ? ` · started ${esc(ago(x.started_at))}` : ""}</span></button>`).join("")
+      : `<p class="hint" style="margin:0">Nothing live in ${esc(region)} right now.</p>`;
+    lbFade();
+  } catch (e) { /* leave the banner as it was */ }
+}
+function lbFade() {                    // only when there are more tiles than fit: fade the edge that has more beyond it
+  const el = $("#lb-list"), max = el.scrollWidth - el.clientWidth;
+  el.classList.toggle("fade-l", max > 2 && el.scrollLeft > 2);
+  el.classList.toggle("fade-r", max > 2 && el.scrollLeft < max - 2);
+}
+$("#lb-list").addEventListener("scroll", lbFade, { passive: true });
+window.addEventListener("resize", lbFade);
+$("#lb-only").addEventListener("change", () => { try { localStorage.setItem("evileye-lb-region", $("#lb-only").checked ? "1" : "0"); } catch (e) { /* ignore */ } loadLive(); });
+$("#lb-list").addEventListener("click", async (e) => {
+  const t = e.target.closest(".lb-tile");
+  if (!t) return;
+  try { const v = await fetchVictim(t.dataset.title); if (v) openVictim(v); else toast("Could not find that breach any more."); } catch (err) { toast("Could not load the breach details: " + err.message); }
+});
+
+// ------------------------------------------------------------------ settings: markers (admin)
+const MK_PALETTE = ["#e02a52", "#f08a3c", "#e6bf55", "#44c593", "#36c5d6", "#4f9dff", "#7c83ff", "#a98bff", "#ec6dbd", "#94a2b7"];
+let mkSel = "#4f9dff";
+function mkPreview() { const p = $("#mk-preview"); p.style.setProperty("--mk", safeColour(mkSel)); p.innerHTML = `${ICON_PLAY}${esc(mkShort($("#mk-name").value.trim() || "Marker"))} AB`; }
+function mkPickColour(c) {
+  mkSel = c.toLowerCase();
+  document.querySelectorAll("#mk-swatches input").forEach((r) => { r.checked = r.value === mkSel; });
+  if (/^#[0-9a-f]{6}$/.test(mkSel)) $("#mk-colour").value = mkSel;
+  mkPreview();
+}
+$("#mk-swatches").innerHTML = MK_PALETTE.map((c) => `<label class="mk-sw" style="--mk:${c}" title="${c}"><input type="radio" name="mkc" value="${c}" aria-label="Colour ${c}"><span></span></label>`).join("");
+$("#mk-swatches").addEventListener("change", (e) => { if (e.target.name === "mkc") mkPickColour(e.target.value); });
+$("#mk-colour").addEventListener("input", () => mkPickColour($("#mk-colour").value));
+$("#mk-name").addEventListener("input", mkPreview);
+mkPickColour(mkSel);
+const mkMsg = (t) => { const m = $("#mk-msg"); m.hidden = !t; m.textContent = t || ""; };
+$("#mkform").addEventListener("submit", (e) => {
+  e.preventDefault(); mkMsg("");
+  busy(e.target, async () => {
+    try { const r = await api("/api/admin/marker-types", { method: "POST", body: { name: $("#mk-name").value, colour: mkSel } }); toast(`Marker “${r.name}” added`); $("#mk-name").value = ""; mkPreview(); await loadSettings(); $("#mk-name").focus(); }
+    catch (err) { mkMsg(err.message); }
+  });
+});
+function renderMarkerTypes() {
+  $("#mk-list").innerHTML = MKTYPES.map((t) => `<div class="mkrow${t.active ? "" : " retired"}" data-id="${t.id}" style="--mk:${safeColour(t.colour)}">
+    <input type="color" class="mk-pick" value="${safeColour(t.colour)}" aria-label="Colour for ${esc(t.name)}" title="Change the colour">
+    <div class="mkrow-main"><strong>${esc(t.name)}</strong>${t.builtin ? ' <span class="badge src">built in</span>' : ""}${t.active ? "" : ' <span class="badge off">retired</span>'}
+      <span class="meta">${t.live} live · ${t.total} in total</span></div>
+    <span class="badge mk started" style="--mk:${safeColour(t.colour)}" aria-hidden="true">${ICON_PLAY}${esc(t.name.length > 12 ? t.name.slice(0, 11) + "…" : t.name)} AB</span>
+    <div class="mkrow-a"><button type="button" class="more" data-mkt="rename" data-id="${t.id}">Rename</button>${t.builtin ? "" : `<button type="button" class="more" data-mkt="${t.active ? "retire" : "use"}" data-id="${t.id}">${t.active ? "Retire" : "Use again"}</button><button type="button" class="more danger" data-mkt="delete" data-id="${t.id}" aria-label="Delete the marker ${esc(t.name)}">Delete</button>`}</div></div>`).join("");
+}
+async function loadSettings() { await loadMarkerTypes(); renderMarkerTypes(); }
+$("#mk-list").addEventListener("change", async (e) => {
+  const pick = e.target.closest(".mk-pick");
+  if (!pick) return;
+  try { await api(`/api/admin/marker-types/${pick.closest(".mkrow").dataset.id}`, { method: "PATCH", body: { colour: pick.value } }); toast("Colour saved"); } catch (err) { toast(err.message); }
+  loadSettings();
+});
+$("#mk-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-mkt]");
+  if (!b) return;
+  const t = MKTYPES.find((x) => String(x.id) === b.dataset.id), act = b.dataset.mkt;
+  const done = (m) => { toast(m); loadSettings(); };
+  try {
+    if (act === "rename") {
+      openModal(); $("#modal-back").hidden = true;
+      $("#modal-title").textContent = `Rename marker: ${t.name}`; $("#modal-explain").textContent = "It is renamed everywhere it is already used.";
+      $("#modal-body").innerHTML = `<form id="mkrform" class="form-row"><label class="field">Marker name<input id="mkr-name" class="search" required maxlength="24" value="${esc(t.name)}" autocomplete="off"></label><button class="btn" type="submit">Save</button><button type="button" class="more" id="mkr-cancel">Cancel</button></form><p id="mkr-msg" class="hint" role="alert"></p>`;
+      $("#mkr-name").focus(); $("#mkr-name").select();
+      $("#mkr-cancel").addEventListener("click", closeModal);
+      $("#mkrform").addEventListener("submit", (ev) => { ev.preventDefault(); busy(ev.target, async () => { try { await api(`/api/admin/marker-types/${t.id}`, { method: "PATCH", body: { name: $("#mkr-name").value } }); closeModal(); done("Renamed"); } catch (err) { $("#mkr-msg").textContent = err.message; } }); });
+    } else if (act === "retire") { await api(`/api/admin/marker-types/${t.id}`, { method: "PATCH", body: { active: false } }); done(`${t.name} retired`); }
+    else if (act === "use") { await api(`/api/admin/marker-types/${t.id}`, { method: "PATCH", body: { active: true } }); done(`${t.name} can be used again`); }
+    else if (act === "delete" && confirm(`Delete the marker “${t.name}”? ${t.total ? "It is used on breaches, so this will be refused: retire it instead." : "Nothing carries it, so nothing else changes."}`)) { await api(`/api/admin/marker-types/${t.id}`, { method: "DELETE" }); done(`${t.name} deleted`); }
+  } catch (err) { toast(err.message); }
+});
+
+// ------------------------------------------------------------------ groups: named sets of people
+const gMsg = (text) => { const m = $("#g-msg"); m.hidden = !text; m.textContent = text || ""; };
 $("#gform").addEventListener("submit", (e) => {
   e.preventDefault(); gMsg("");
   busy(e.target, async () => {
@@ -1554,6 +1744,7 @@ $("#refresh-now").addEventListener("click", async () => {
 
 async function init() {
   try { ME = await api("/api/me"); } catch (e) { return; }
+  if (ME.database) loadMarkerTypes();
   if (ME.theme && ME.theme !== curTheme()) setTheme(ME.theme);      // the look chosen on the account wins over this browser's last setting
   if (ME.must_change) { showPwReq(); return; }        // nothing else works until the password has been changed
   const h = readHash();
