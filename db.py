@@ -141,6 +141,27 @@ do $$ begin
 end $$;
 update victim_markers set marked_at = allocated_at where marked_at is null;
 
+-- breaches added by hand (any signed-in person adds one; an admin edits or removes it in Settings). They join the feed's victims on the dashboard.
+create table if not exists manual_breaches (
+    id           serial primary key,
+    key          text not null,
+    title        text not null,
+    rocu         text not null,
+    occurred     date not null,
+    gang         text not null default '',
+    sector       text not null default '',
+    website      text not null default '',
+    town         text not null default '',
+    data         text not null default '',
+    ransom       text not null default '',
+    description  text not null default '',
+    created_by   text not null default '',
+    created_at   timestamptz not null default now(),
+    updated_by   text not null default '',
+    updated_at   timestamptz not null default now()
+);
+create unique index if not exists manual_breaches_key on manual_breaches (key);
+
 -- email alerts: an address per person (set by an admin; optional), and a switch for each person to stop their own
 alter table users add column if not exists email text;
 alter table users add column if not exists email_alerts boolean not null default true;

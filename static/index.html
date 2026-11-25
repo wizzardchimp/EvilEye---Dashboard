@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script src="/static/theme-init.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=92">
+  <link rel="stylesheet" href="/static/style.css?v=95">
 </head>
 <body>
   <header class="topbar">
@@ -56,7 +56,7 @@
 
   <div class="navrow" id="navrow">
   <nav class="tabs" id="tabs">
-    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab active" data-tab="overview">Overview</button><button type="button" id="add-breach" class="tabadd" aria-label="Add a breach" title="Add a breach by hand" aria-haspopup="dialog" hidden>+</button>
     <button class="tab" data-tab="victims">UK Victims</button>
     <button class="tab" data-tab="news">Dark Web News</button>
     <button class="tab" data-tab="gangs">Gang Catalog</button>
@@ -295,6 +295,10 @@
         <div id="mk-msg" class="callout err" role="alert" hidden></div>
         <div id="mk-list" class="mk-list"></div>
       </div>
+      <div class="card" id="mb-card">
+        <div class="card-head"><h3>Manual breaches</h3><span class="meta">Breaches added by hand with the + beside Overview. Edit or remove them here.</span></div>
+        <div id="mb-list" class="mb-list"></div>
+      </div>
       <div class="card" id="ea-card">
         <div class="card-head"><h3>Email alerts</h3><span class="meta">Tell a group by email when a new breach appears in the regions it watches.</span></div>
         <div id="ea-status" class="callout" hidden></div>
@@ -349,6 +353,27 @@
     </div>
   </div>
 
+  <div id="abdlg" class="modal fdlg" hidden>
+    <div class="modal-card fd-card ab-card" role="dialog" aria-modal="true" aria-labelledby="ab-title">
+      <div class="card-head"><h3 id="ab-title">Add a breach</h3><div class="modal-actions"><button id="ab-close" class="more" type="button">Close</button></div></div>
+      <p class="hint">Only the name, region and date are needed. Everything else is optional.</p>
+      <form id="abform" class="ab-form" autocomplete="off" novalidate>
+        <label class="field">Name <span class="req">required</span><input id="ab-title-in" class="search" maxlength="200" required></label>
+        <div class="ab-two">
+          <label class="field">Region <span class="req">required</span><select id="ab-rocu" class="search" required></select></label>
+          <label class="field">Date <span class="req">required</span><input id="ab-date" type="date" class="search" required></label>
+        </div>
+        <fieldset class="ab-opt"><legend>Optional</legend>
+          <div class="ab-two"><label class="field">Gang<input id="ab-gang" class="search" maxlength="60"></label><label class="field">Sector<input id="ab-sector" class="search" maxlength="60"></label></div>
+          <div class="ab-two"><label class="field">Website<input id="ab-website" class="search" maxlength="200" placeholder="example.co.uk"></label><label class="field">Town<input id="ab-town" class="search" maxlength="60"></label></div>
+          <div class="ab-two"><label class="field">Data<input id="ab-data" class="search" maxlength="40" placeholder="e.g. 12 GB"></label><label class="field">Ransom<input id="ab-ransom" class="search" maxlength="40"></label></div>
+          <label class="field">Description<textarea id="ab-desc" class="search" rows="3" maxlength="700"></textarea></label>
+        </fieldset>
+        <p id="ab-msg" class="fd-msg" role="alert"></p>
+        <div class="fd-row"><button type="submit" class="btn" id="ab-save">Add breach</button><button type="button" class="more danger" id="ab-del" hidden>Delete this breach</button></div>
+      </form>
+    </div>
+  </div>
   <div id="fdlg" class="modal fdlg" hidden>
     <div class="modal-card fd-card" role="dialog" aria-modal="true" aria-labelledby="fd-title">
       <div class="card-head">
@@ -449,6 +474,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i><i id="ob-dot3"></i><i id="ob-dot4"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=89"></script>
+  <script src="/static/app.js?v=90"></script>
 </body>
 </html>

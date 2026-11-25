@@ -115,6 +115,9 @@ top, and flagging or allocating a breach refreshes it in place without losing yo
   dashed **Admin: set region** card with the manual placement form.
 - **Region** (and how it was decided), the description, flags, the Task and other markers, and the admin region editor.
 
+## Adding a breach by hand
+The **+** beside Overview (anyone signed in) opens **Add a breach**. Only the **name, region and date** are required; gang, sector, website, town, data, ransom and a description are optional. The breach then behaves like any other: it is in the lists, regional counts, search, the Victims table and the CSV, can carry flags and tasks, and opens in the pane (marked "added by hand", with its region "chosen when it was added by hand"; an admin's manual placement still overrides it). It survives feed refreshes. A name already on the dashboard is refused. Admins see all of them in **Settings → Manual breaches** and can edit (including renaming, which keeps its flags and tasks) or delete one (its flags and tasks go with it). Stored in `manual_breaches`; `POST /api/breaches`, and for admins `GET /api/admin/breaches` and `PATCH` / `DELETE /api/admin/breaches/<id>`.
+
 ## Regions (ROCU)
 ROCUs are groupings of police forces: ROCU > force > organisation. The 43 forces of England and Wales map to 10 ROCUs;
 Scotland and Northern Ireland are their own buckets. A victim is placed by the first method that works:

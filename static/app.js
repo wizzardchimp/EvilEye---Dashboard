@@ -546,7 +546,7 @@ async function loadBreachExtras(v) {
   if ($("#br-src")) $("#br-src").innerHTML = sourcesHtml(v, ctx);
 }
 const BASIS = { text: "a place name in its description", postcode: "a postcode in its description", "companies-house": "its Companies House registered office",
-  manual: "set manually by an admin" };
+  manual: "set manually by an admin", entered: "the region chosen when it was added by hand" };
 function flagsHtml(v) {                       // the false-positive flag, and every task or marker with its dates and the buttons to move it along
   const f = v.flag, ms = v.markers || [];
   const fp = f ? `<div class="fl-row"><span class="badge fp">false positive</span><span>${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""} <span class="meta">by ${esc(f.by)}, ${esc(fmtDay(f.at))}${f.applied ? "" : ", not in effect now"}</span></span></div>` : "";
@@ -569,7 +569,7 @@ function openVictim(v, quiet = false) {
   const where = `${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) && v.town !== v.force_name ? ` · ${esc(v.town)}` : ""}`;
   $("#dr-body").innerHTML = `
     <div class="dsum">
-      <div class="dsum-b">${newBadge(v).trim()} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
+      <div class="dsum-b">${newBadge(v).trim()}${v.manual_breach ? ` <span class="badge src" title="Added by hand by ${esc(v.added_by)}">added by hand</span>` : ""} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
       ${ME.database ? `<div class="dr-actions">${marks(v)}<button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate</button></div>` : ""}
     </div>
     ${sect("details", "Breach details", `<dl class="facts">
@@ -1296,7 +1296,57 @@ function renderMarkerTypes() {
     <span class="badge mk started" style="--mk:${safeColour(t.colour)}" aria-hidden="true">${mkIcon({ builtin: t.builtin, status: "started" })}${esc(t.name.length > 12 ? t.name.slice(0, 11) + "…" : t.name)} AB</span>
     <div class="mkrow-a"><button type="button" class="more" data-mkt="rename" data-id="${t.id}">Rename</button>${t.builtin ? "" : `<button type="button" class="more" data-mkt="${t.active ? "retire" : "use"}" data-id="${t.id}">${t.active ? "Retire" : "Use again"}</button><button type="button" class="more danger" data-mkt="delete" data-id="${t.id}" aria-label="Delete the marker ${esc(t.name)}">Delete</button>`}</div></div>`).join("");
 }
-async function loadSettings() { await loadMarkerTypes(); renderMarkerTypes(); loadEmailAlerts(); }
+async function loadSettings() { await loadMarkerTypes(); renderMarkerTypes(); loadEmailAlerts(); loadManualBreaches(); }
+// ------------------------------------------------------------------ adding a breach by hand (anyone), editing and removing it (Settings, admins)
+const abdlg = $("#abdlg"); let abEdit = null, abOpener = null;
+const AB_FIELDS = [["gang", "#ab-gang"], ["sector", "#ab-sector"], ["website", "#ab-website"], ["town", "#ab-town"], ["data", "#ab-data"], ["ransom", "#ab-ransom"], ["description", "#ab-desc"]];
+const today = () => dtLocal(new Date().toISOString());
+function openBreachForm(item) {
+  abEdit = item || null; abOpener = document.activeElement;
+  $("#ab-title").textContent = item ? "Edit breach" : "Add a breach"; $("#ab-save").textContent = item ? "Save changes" : "Add breach"; $("#ab-del").hidden = !item;
+  $("#ab-rocu").innerHTML = '<option value="">Choose a region&hellip;</option>' + (ME.regions || []).filter((r) => r !== "Unplaced").map((r) => `<option>${esc(r)}</option>`).join("");
+  $("#ab-title-in").value = item ? item.title : ""; $("#ab-rocu").value = item ? item.rocu : (region && region !== "Unplaced" ? region : "");
+  $("#ab-date").value = item ? item.date : today(); $("#ab-date").max = today();
+  for (const [k, sel] of AB_FIELDS) $(sel).value = item ? item[k] || "" : "";
+  $("#ab-msg").textContent = ""; abdlg.hidden = false; $("#ab-title-in").focus();
+}
+function closeBreachForm() { abdlg.hidden = true; if (abOpener && document.contains(abOpener)) abOpener.focus({ preventScroll: true }); abOpener = null; }
+$("#add-breach").addEventListener("click", () => openBreachForm(null));
+$("#ab-close").addEventListener("click", closeBreachForm);
+abdlg.addEventListener("click", (e) => { if (e.target === abdlg) closeBreachForm(); });
+$("#abform").addEventListener("submit", (e) => {
+  e.preventDefault();
+  busy(e.target, async () => {
+    const body = { title: $("#ab-title-in").value, rocu: $("#ab-rocu").value, date: $("#ab-date").value };
+    for (const [k, sel] of AB_FIELDS) body[k] = $(sel).value;
+    const msg = $("#ab-msg"); msg.textContent = "";
+    if (!body.title.trim()) { msg.textContent = "Give the breach a name."; $("#ab-title-in").focus(); return; }
+    if (!body.rocu) { msg.textContent = "Choose a region."; $("#ab-rocu").focus(); return; }
+    if (!body.date) { msg.textContent = "Give the date."; $("#ab-date").focus(); return; }
+    try {
+      if (abEdit) { await api(`/api/admin/breaches/${abEdit.id}`, { method: "PATCH", body }); toast("Saved"); closeBreachForm(); loadManualBreaches(); }
+      else {
+        const r = await api("/api/breaches", { method: "POST", body }); closeBreachForm(); toast("Breach added");
+        loadTicker(); loadLive(); refreshCurrent();
+        try { const v = await fetchVictim(r.title); if (v) openVictim(v); } catch (err) { /* the list shows it */ }
+      }
+    } catch (err) { msg.textContent = err.message; }
+  });
+});
+$("#ab-del").addEventListener("click", async () => {
+  if (!abEdit || !confirm(`Delete “${abEdit.title}”? Its flags and tasks are deleted with it.`)) return;
+  try { await api(`/api/admin/breaches/${abEdit.id}`, { method: "DELETE" }); toast("Breach deleted"); closeBreachForm(); loadManualBreaches(); loadTicker(); loadLive(); refreshCurrent(); }
+  catch (err) { $("#ab-msg").textContent = err.message; }
+});
+let MB = [];
+async function loadManualBreaches() {
+  try {
+    MB = (await api("/api/admin/breaches")).items;
+    $("#mb-list").innerHTML = MB.length ? MB.map((x) => `<div class="mb-row"><div class="mb-main"><strong>${esc(x.title)}</strong><span class="meta">${esc(x.rocu)} &middot; ${esc(fmtDay(x.date + "T12:00:00"))}${x.gang ? " &middot; " + esc(x.gang) : ""} &middot; added by ${esc(x.created_by)}</span></div>
+      <button type="button" class="more" data-mb="${x.id}">Edit</button></div>`).join("") : '<p class="hint" style="margin:0">None yet. Use the + beside Overview to add one.</p>';
+  } catch (e) { $("#mb-list").innerHTML = `<p class="hint">${esc(e.message)}</p>`; }
+}
+$("#mb-list").addEventListener("click", (e) => { const b = e.target.closest("[data-mb]"); if (b) openBreachForm(MB.find((x) => String(x.id) === b.dataset.mb)); });
 // ------------------------------------------------------------------ email alerts (Settings): per-group regions, the master switch, a test, the log
 let EA = null;
 function renderEaHead() {
@@ -1924,7 +1974,7 @@ const gsFocus = () => { if (window.scrollY > 0) window.scrollTo(0, 0); gs.input.
 
 // keyboard: "/" jumps to the search box of the current tab (or the top-bar search), Ctrl/Cmd+K to the top-bar search from anywhere, Esc closes dialogs
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!trdlg.hidden) closeTr(); else if (!modal.hidden) closeModal(); return; }
+  if (e.key === "Escape") { if (!abdlg.hidden) closeBreachForm(); else if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!trdlg.hidden) closeTr(); else if (!modal.hidden) closeModal(); return; }
   if (!obEl.hidden) return;
   if ((e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) { e.preventDefault(); gsFocus(); return; }
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
@@ -2012,7 +2062,7 @@ async function openFromLink() {                // a link in an alert email is /?
 }
 async function init() {
   try { ME = await api("/api/me"); } catch (e) { return; }
-  if (ME.database) loadMarkerTypes();
+  if (ME.database) { loadMarkerTypes(); $("#add-breach").hidden = false; }
   if (ME.theme && ME.theme !== curTheme()) setTheme(ME.theme);      // the look chosen on the account wins over this browser's last setting
   if (ME.must_change) { showPwReq(); return; }        // nothing else works until the password has been changed
   const h = readHash();

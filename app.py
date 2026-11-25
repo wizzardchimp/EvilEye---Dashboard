@@ -147,6 +147,37 @@ def load_marks():
         STATE["errors"]["marks"] = str(e)
 
 
+MANUAL = []             # breaches added by hand, as victim records (PostgreSQL manual_breaches)
+
+
+def _manual_rec(r):
+    """A victim record in the shape the feed's victims have, for a breach somebody entered."""
+    d, made = r["occurred"], r["created_at"]
+    seen = made if made.date() == d else datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc)
+    iso = seen.astimezone(timezone.utc).isoformat()
+    return {"post_title": r["title"], "key": r["key"], "group": r["gang"] or "unknown", "activity": _sector(r["sector"]), "discovered": iso, "seen": iso,
+            "year": str(d.year), "website": r["website"], "post_url": "", "description": r["description"], "reposts": 0, "data": r["data"],
+            "data_basis": "stated" if r["data"] else "", "ransom": r["ransom"], "text_force": "", "text_term": "", "postcode_hint": "", "text_overseas": "",
+            "overseas_weak": False, "registered_name": "", "town": r["town"], "manual_breach": r["id"], "added_by": r["created_by"], "entered_rocu": r["rocu"]}
+
+
+def load_manual():
+    if LEGACY:
+        return
+    global MANUAL
+    try:
+        MANUAL = [_manual_rec(r) for r in db.many("select * from manual_breaches order by id")]
+    except Exception as e:
+        STATE["errors"]["manual"] = str(e)
+
+
+def _merge_manual(victims):
+    """The feed's victims plus the ones entered by hand (a hand-entered breach never replaces a feed victim of the same name)."""
+    feed = [v for v in victims if not v.get("manual_breach")]
+    have = {v["key"] for v in feed}
+    return feed + [dict(m) for m in MANUAL if m["key"] not in have]
+
+
 def _apply_geo(victims):
     """Region, in order of trust: an admin's manual placement, an API result (postcode / Companies House),
     the place-name guess, a probable overseas head office, else Unplaced."""
@@ -158,6 +189,8 @@ def _apply_geo(victims):
         if ov:
             v.update(rocu=ov["rocu"], force="", region_source="manual", town=ov.get("town") or "",
                      registered_name=v.get("registered_name", ""))
+        elif v.get("entered_rocu"):                        # the person who added it chose its region
+            v.update(rocu=v["entered_rocu"], force="", region_source="entered", town=v.get("town", ""))
         elif g.get("status") == "placed":
             v.update(rocu=g["rocu"], force=g["force"], region_source=g.get("source", "api"), town=g.get("district") or "",
                      registered_name=g.get("company") or "")
@@ -507,7 +540,8 @@ def _ingest():
                     old["reposts"] += 1
                     continue
             rows[k] = rec
-        victims = list(rows.values())
+        load_manual()
+        victims = _merge_manual(list(rows.values()))
         load_overrides()
         load_marks()
         _apply_geo(victims)
@@ -736,9 +770,11 @@ if not LEGACY:
         bootstrap_admin()
         load_overrides()
         load_marks()
+        load_manual()
     except Exception as e:                      # keep serving; login reports the database error
         STATE["errors"]["db"] = str(e)
-if STATE["victims"]:
+if STATE["victims"] or MANUAL:
+    STATE["victims"] = _merge_manual(STATE["victims"])
     _apply_geo(STATE["victims"])
 
 
@@ -1641,6 +1677,144 @@ def _find_victim(title):
     return next((v for v in STATE["victims"] if key and v["key"] == key), None)
 
 
+def _manual_changed():
+    load_manual()
+    with _lock:
+        STATE["victims"] = _merge_manual(STATE["victims"])
+    _apply_geo(STATE["victims"])
+    try:
+        _save_snapshot()
+    except Exception as e:
+        STATE["errors"]["snapshot"] = str(e)
+
+
+BREACH_LIMITS = {"gang": 60, "sector": 60, "website": 200, "town": 60, "data": 40, "ransom": 40, "description": 700}
+BREACH_MAX = 2000
+
+
+def _breach_fields(b, partial=False):
+    """(clean fields, error). Required: name, region and date; everything else is optional (and may be left out)."""
+    out = {}
+    if not partial or "title" in b:
+        name, why = _tidy_label(b.get("title"), 200, "breach")
+        if why:
+            return None, why
+        out["title"] = name
+    if not partial or "rocu" in b:
+        if b.get("rocu") not in PLACEABLE:
+            return None, "Choose a region."
+        out["rocu"] = b["rocu"]
+    if not partial or "date" in b:
+        try:
+            d = datetime.strptime(str(b.get("date")), "%Y-%m-%d").date()
+        except ValueError:
+            return None, "Give the date of the breach."
+        if d < datetime(2000, 1, 1).date() or d > (datetime.now(timezone.utc) + timedelta(days=1)).date():
+            return None, "The date must be after 1999 and not in the future."
+        out["occurred"] = d
+    for k, n in BREACH_LIMITS.items():
+        if k in b:
+            s = b[k]
+            if s is None:
+                s = ""
+            if not isinstance(s, str):
+                return None, f"{k.capitalize()} must be text."
+            s = s.strip() if k == "description" else re.sub(r"\s+", " ", s).strip()
+            if len(s) > n or any(unicodedata.category(ch) in ("Cc", "Cf") and ch not in "\n\t" for ch in s):
+                return None, f"{k.capitalize()} is too long, or has hidden characters (at most {n})."
+            out[{"gang": "gang"}.get(k, k)] = s
+    return out, None
+
+
+def _breach_row(r):
+    return {"id": r["id"], "title": r["title"], "rocu": r["rocu"], "date": r["occurred"].isoformat(), "gang": r["gang"], "sector": r["sector"], "website": r["website"],
+            "town": r["town"], "data": r["data"], "ransom": r["ransom"], "description": r["description"], "created_by": r["created_by"],
+            "created_at": r["created_at"].isoformat(), "updated_by": r["updated_by"], "updated_at": r["updated_at"].isoformat()}
+
+
+@app.post("/api/breaches")
+def breach_add():
+    """Anyone signed in can add a breach by hand. Name, region and date are required; the rest is optional."""
+    if LEGACY:
+        return jsonify(error="Database not connected: breaches cannot be added."), 503
+    f, why = _breach_fields(request.get_json(silent=True) or {})
+    if why:
+        return jsonify(error=why), 400
+    key = geo.norm(f["title"])
+    if not key:
+        return jsonify(error="Give the breach a name with letters or numbers."), 400
+    if any(v["key"] == key for v in STATE["victims"]):
+        return jsonify(error="A breach with that name is already on the dashboard."), 409
+    if db.one("select count(*) as n from manual_breaches")["n"] >= BREACH_MAX:
+        return jsonify(error="Too many hand-added breaches."), 400
+    u = current_user()
+    try:
+        row = db.run("""insert into manual_breaches (key, title, rocu, occurred, gang, sector, website, town, data, ransom, description, created_by, updated_by)
+                        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+                     (key, f["title"], f["rocu"], f["occurred"], f.get("gang", ""), f.get("sector", ""), f.get("website", ""), f.get("town", ""), f.get("data", ""),
+                      f.get("ransom", ""), f.get("description", ""), u["username"], u["username"]))
+    except db.Duplicate:
+        return jsonify(error="A breach with that name is already on the dashboard."), 409
+    _manual_changed()
+    log("breach_add", f'{f["title"]} ({f["rocu"]})')
+    return jsonify(ok=True, id=row["id"], title=f["title"]), 201
+
+
+@app.get("/api/admin/breaches")
+@admin_required
+def admin_breaches():
+    return jsonify(items=[_breach_row(r) for r in db.many("select * from manual_breaches order by occurred desc, id desc")], regions=PLACEABLE)
+
+
+@app.patch("/api/admin/breaches/<int:bid>")
+@admin_required
+def admin_breach_update(bid):
+    r = db.one("select * from manual_breaches where id=%s", (bid,))
+    if not r:
+        return jsonify(error="No such breach."), 404
+    f, why = _breach_fields(request.get_json(silent=True) or {}, partial=True)
+    if why:
+        return jsonify(error=why), 400
+    if not f:
+        return jsonify(error="Nothing to change."), 400
+    new = {"title": r["title"], "rocu": r["rocu"], "occurred": r["occurred"], **{k: r[k] for k in BREACH_LIMITS}}
+    new.update(f)
+    key = geo.norm(new["title"])
+    if not key:
+        return jsonify(error="Give the breach a name with letters or numbers."), 400
+    if key != r["key"] and (any(v["key"] == key for v in STATE["victims"]) or db.one("select 1 as x from manual_breaches where key=%s", (key,))):
+        return jsonify(error="A breach with that name is already on the dashboard."), 409
+    steps = [("""update manual_breaches set key=%s, title=%s, rocu=%s, occurred=%s, gang=%s, sector=%s, website=%s, town=%s, data=%s, ransom=%s, description=%s,
+                 updated_by=%s, updated_at=now() where id=%s""",
+              (key, new["title"], new["rocu"], new["occurred"], new["gang"], new["sector"], new["website"], new["town"], new["data"], new["ransom"], new["description"],
+               current_user()["username"], bid))]
+    if key != r["key"]:                  # a renamed breach keeps its flags, tasks and placement
+        steps += [("update victim_markers set key=%s, victim=%s where key=%s", (key, new["title"], r["key"])), ("update victim_flags set key=%s where key=%s", (key, r["key"])),
+                  ("update placement_overrides set key=%s where key=%s", (key, r["key"]))]
+    db.txn(steps)
+    if key != r["key"]:
+        load_overrides()
+        load_marks()
+    _manual_changed()
+    log("breach_update", f'{new["title"]}: ' + ", ".join(sorted(f)))
+    return jsonify(ok=True)
+
+
+@app.delete("/api/admin/breaches/<int:bid>")
+@admin_required
+def admin_breach_delete(bid):
+    r = db.one("select * from manual_breaches where id=%s", (bid,))
+    if not r:
+        return jsonify(error="No such breach."), 404
+    db.txn([("delete from victim_markers where key=%s", (r["key"],)), ("delete from victim_flags where key=%s", (r["key"],)),
+            ("delete from placement_overrides where key=%s", (r["key"],)), ("delete from manual_breaches where id=%s", (bid,))])
+    load_overrides()
+    load_marks()
+    _manual_changed()
+    log("breach_delete", r["title"])
+    return jsonify(ok=True)
+
+
 def _marks_changed():
     load_marks()
     _apply_geo(STATE["victims"])
@@ -2290,7 +2464,7 @@ def _alloc_view(v):
     return {"initials": a["initials"], "by": a["allocated_by"], "at": a["allocated_at"].isoformat()} if a else None
 
 
-VIEW_KEYS = ("post_title", "group", "activity", "discovered", "seen", "year", "website", "post_url", "rocu", "force", "force_name",
+VIEW_KEYS = ("manual_breach", "added_by", "post_title", "group", "activity", "discovered", "seen", "year", "website", "post_url", "rocu", "force", "force_name",
              "town", "region_source", "registered_name", "manual", "override_note", "description", "reposts", "overseas_weak",
              "data", "data_basis", "ransom")
 
