@@ -193,6 +193,7 @@ kept (and shown in the breach pane and the dialog) as the record of who did it a
 shows the live tasks as **small tiles**, three lines each: the breach; the marker, the initials and the state ("Allocated", "Unallocated" or "In progress"); and
 the place (the town, or the region and town when the banner covers more than one region) with one time, "started 2h ago" or else "allocated 6d ago" ("marked", for a
 Task nobody has taken). The full wording is in a tile's tooltip. **Completed tasks are never listed** (the page also refuses to draw one if it were ever sent).
+A **Key** button at the foot of the banner explains the markings: an allocated task shows a dash and the initials ("– JS", kept after it is completed, then with a tick), an unallocated Task has an orange border, and a finished one a dashed outline.
 **With a region chosen in the header, the banner shows every live task in that region by default** (the switch **Only <region>** is ticked; untick it to see every region;
 your choice is remembered on that browser). The tiles wrap onto as many rows as they need, so **every task is on show**: nothing scrolls sideways and nothing is hidden
 (on a phone they are a single column in the page). Work in progress comes first (the most recently started first), then the Tasks nobody has taken yet (dashed edge, no

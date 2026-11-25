@@ -157,7 +157,7 @@ const mkShort = (n) => (n.length > 12 ? n.slice(0, 11) + "…" : n);        // t
 // the Task wears a crown (with a play or a tick beside it once it is in progress or done); the others keep the person
 const mkIcon = (m) => (m.builtin ? ICON_CROWN + (m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : "")
   : m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : ICON_PERSON);
-const mkBadge = (m) => `<span class="badge${m.builtin ? " alloc" : ""} mk ${m.status}" style="--mk:${safeColour(m.colour)}" title="${esc(markerText(m))}">${mkIcon(m)}${m.builtin ? "" : esc(mkShort(m.name)) + " "}${m.status === "unallocated" ? "Unallocated" : esc(m.initials)}</span>`;
+const mkBadge = (m) => `<span class="badge${m.builtin ? " alloc" : ""} mk ${m.status}" style="--mk:${safeColour(m.colour)}" title="${esc(markerText(m))}">${mkIcon(m)}${m.builtin ? "" : esc(mkShort(m.name)) + " "}${m.status === "unallocated" ? "Unallocated" : "&ndash; " + esc(m.initials)}</span>`;     // allocated: a dash, then the initials, and they stay when it is completed
 const liveMarkers = (v) => (v.markers || []).filter((m) => m.status !== "completed");
 const marks = (v, all) => [
   v.flag && v.flag.applied ? `<span class="badge fp" title="${esc(flagText(v.flag))}">false positive</span>` : "",
@@ -1100,10 +1100,10 @@ async function loadLive() {
 }
 const lbKey = $("#lb-key"), lbKeyBtn = $("#lb-legend");
 const keyRow = (cls, label, text) => `<div class="lk-row"><span class="badge mk alloc ${cls}" style="--mk:#44c593">${label}</span><span>${text}</span></div>`;
-lbKey.innerHTML = `<strong>Solid or dotted?</strong>
-  ${keyRow("allocated", ICON_CROWN + "Task JS", "<b>Solid line</b>: someone has it (their initials are on it). A stronger fill and a play icon mean it is in progress.")}
-  ${keyRow("unallocated", ICON_CROWN + "Task", "<b>Dotted line</b> (a dashed edge on the tile): marked as a Task, but nobody has taken it yet.")}
-  ${keyRow("completed", ICON_CROWN + ICON_TICK + "Task", "<b>Dashed line</b>: finished. Only seen in the breach pane and the review, never on this banner.")}`;
+lbKey.innerHTML = `<strong>Key</strong>
+  ${keyRow("allocated", ICON_CROWN + "&ndash; JS", "<b>Dash and initials</b>: someone has it. A stronger fill and a play icon mean it is in progress.")}
+  ${keyRow("unallocated", ICON_CROWN + "Task", "<b>Orange border</b>: marked as a Task, but nobody has taken it yet.")}
+  ${keyRow("completed", ICON_CROWN + ICON_TICK + "&ndash; JS", "<b>Dashed line, initials kept</b>: finished. Only seen in the breach pane and the review, never on this banner.")}`;
 const lbKeyShut = () => { lbKey.hidden = true; lbKeyBtn.setAttribute("aria-expanded", "false"); };
 lbKeyBtn.addEventListener("click", (e) => { e.stopPropagation(); lbKey.hidden = !lbKey.hidden; lbKeyBtn.setAttribute("aria-expanded", String(!lbKey.hidden)); });
 document.addEventListener("click", (e) => { if (!lbKey.hidden && !lbKey.contains(e.target)) lbKeyShut(); });

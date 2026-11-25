@@ -1030,3 +1030,10 @@ select.search { flex: 0 1 210px; }
   .lb-keywrap { position: static; }
   .lb-key { left: 14px; right: 14px; width: auto; top: 44px; }
 }
+
+/* key at the foot of the banner, opening upwards; an unallocated Task has an orange border */
+.lb-foot { display: flex; justify-content: flex-end; padding: 0 0 4px; }
+.lb-key { top: auto; bottom: calc(100% + 6px); }
+.badge.mk.unallocated { border: 1px solid #f08a3c; }
+.lb-tile.unallocated { border: 1px solid #f08a3c; border-left: 4px dashed #f08a3c; }
+@media (max-width: 640px) { .lb-key { top: auto; bottom: 36px; } }
