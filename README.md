@@ -159,6 +159,8 @@ group, sector and age on the left and the victim's area (town or district, when 
 outside links of their own. `/api/ticker?uk=N&reg=N` returns up to 1,500 per list.
 
 ## Flags, tasks and markers
+The breach pane has a **Flags and tasks** card under Breach details and above Company: any false-positive flag and every task or marker with its status, initials and dates, and a **Flag or allocate** button that opens the dialog. In the dialog the false-positive section is behind a **False positive…** button, so it only opens when you mean to deal with it.
+
 Every victim (in the Overview tickers, the UK Victims table and the details drawer) has a flag button. Any signed-in user can:
 
 - **Flag a false positive**, as either **Not in <its region>** (a UK victim that is not in that region) or **Not in the UK**,

@@ -1037,3 +1037,5 @@ select.search { flex: 0 1 210px; }
 .badge.mk.unallocated { border: 1px solid #f08a3c; }
 .lb-tile.unallocated { border: 1px solid #f08a3c; border-left: 4px dashed #f08a3c; }
 @media (max-width: 640px) { .lb-key { top: auto; bottom: 36px; } }
+.fl-row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0 10px; }
+.fl-row .badge { flex: none; }

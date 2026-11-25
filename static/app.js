@@ -466,6 +466,7 @@ function closeDrawer() { drawer.hidden = true; backdrop.hidden = true; }
 const svgI = (d) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const SEC_ICON = {
   details: svgI('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>'),
+  flags: svgI('<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>'),
   company: svgI('<path d="M4 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M14 10h5a1 1 0 0 1 1 1v10"/><path d="M2 21h20"/><path d="M8 8h2M8 12h2M8 16h2"/>'),
   gang: svgI('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.3c2.3.7 3.5 2.6 3.5 5.7"/>'),
   sources: svgI('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
@@ -546,6 +547,14 @@ async function loadBreachExtras(v) {
 }
 const BASIS = { text: "a place name in its description", postcode: "a postcode in its description", "companies-house": "its Companies House registered office",
   manual: "set manually by an admin" };
+function flagsHtml(v) {                       // what is on this breach: a false-positive flag, and every task or marker with its dates
+  const f = v.flag, ms = v.markers || [];
+  const rows = ms.map((m) => `<div class="fl-row"><span class="badge mk ${m.status}${m.builtin ? " alloc" : ""}" style="--mk:${safeColour(m.colour)}">${mkIcon(m)}${esc(mkShort(m.name))}</span>
+    <span><b>${esc(MK_STATUS[m.status])}</b>${m.status === "unallocated" ? "" : ` · ${esc(m.initials)}`} <span class="meta">${m.status === "unallocated" ? "marked" : "allocated"} ${esc(fmtTime(m.allocated_at))}${m.started_at ? `, started ${esc(fmtTime(m.started_at))}` : ""}${m.completed_at ? `, completed ${esc(fmtTime(m.completed_at))}` : ""}</span></span></div>`).join("");
+  const fp = f ? `<div class="fl-row"><span class="badge fp">false positive</span><span>${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""} <span class="meta">by ${esc(f.by)}, ${esc(fmtTime(f.at))}${f.applied ? "" : ", not in effect now"}</span></span></div>` : "";
+  return `${fp}${rows}${!fp && !rows ? '<p class="hint" style="margin:0 0 8px">No flag or task on this breach yet.</p>' : ""}
+    <button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate&hellip;</button>`;
+}
 function openVictim(v, quiet = false) {
   if (!quiet) track("victim_view", v.post_title);
   const same = quiet && !drawer.hidden && drawerVictim && drawerVictim.post_title === v.post_title;      // a refresh of the breach already on screen
@@ -571,6 +580,7 @@ function openVictim(v, quiet = false) {
       ${v.ransom ? fact("Ransom", `${esc(v.ransom)} <span class="meta">as posted</span>`) : ""}
       ${v.reposts ? fact("Re-posted", `${v.reposts} more time${v.reposts === 1 ? "" : "s"} <span class="meta">by the same group</span>`) : ""}
     </dl>`)}
+    ${ME.database ? sect("flags", "Flags and tasks", flagsHtml(v)) : ""}
     ${sect("company", "Company (Companies House)", `<div id="br-co">${prev.co ?? companyHtml(null)}</div>`)}
     ${sect("gang", "Gang responsible", `<div id="br-gang">${prev.gang ?? gangHtml(null)}</div>`)}
     ${sect("sources", "Where this was sourced from", `<div id="br-src">${prev.src ?? sourcesHtml(v, null)}</div>`)}
@@ -834,14 +844,15 @@ function openFlag(v) {
     a ? `<div class="fd-status al"><div class="fd-st-text"><strong>Allocated to ${esc(a.initials)}</strong>, set by ${esc(a.by)}. <span class="meta">${esc(fmtTime(a.at))}</span>${canRelease ? "" : `<br><span class="meta">Only the person who allocated it (${esc(a.by)}), ${esc(a.initials)} or an admin can release this.</span>`}</div>${canRelease ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
   ].join("");
   const placedNow = placed(v), canFlag = !f && !v.manual && v.rocu !== "Overseas / not UK";
-  const fpSection = canFlag ? `<div class="fd-sect"><h4>False positive</h4>
+  const fpSection = canFlag ? `<div class="fd-sect"><button type="button" class="more" id="fd-fp-open" aria-expanded="false" aria-controls="fd-fp">False positive&hellip;</button>
+    <div id="fd-fp" hidden><h4 style="margin-top:12px">False positive</h4>
       <p class="hint">Tell everyone this is not where it appears. It is taken out of that list straight away, and you or an admin can undo it.</p>
       <fieldset class="fd-opts"><legend class="sr-only">Why is it a false positive?</legend>
         ${placedNow ? `<label class="fd-opt"><input type="radio" name="fp" value="not_region"><span><b>Not in ${esc(v.rocu)}</b><small>A UK victim, but not in this region.</small></span></label>` : ""}
         <label class="fd-opt"><input type="radio" name="fp" value="not_uk"><span><b>Not in the UK</b><small>Overseas, or not a UK victim at all.</small></span></label>
       </fieldset>
       <div class="fd-row"><label class="field grow">Note (optional)<input id="fd-note" class="search" maxlength="120" placeholder="e.g. head office is in Dublin"></label>
-        <button type="button" class="btn" id="fd-flag" disabled>Flag as false positive</button></div></div>`
+        <button type="button" class="btn" id="fd-flag" disabled>Flag as false positive</button></div></div></div>`
     : (!f && v.manual ? `<div class="fd-sect"><h4>False positive</h4><p class="hint">An admin set this victim's region by hand, so it can't be flagged. Ask an admin to change it.</p></div>` : "");
   const initial = ME.initials || suggestInitials(ME.username);
   const allocSection = `<div class="fd-sect"><h4>${a ? "Take over" : "Allocate"}</h4>
@@ -859,6 +870,7 @@ function openFlag(v) {
   fdlg.hidden = false;
   const msg = (t) => { $("#fd-msg").textContent = t || ""; };
   const run = async (fn, ok) => { msg(""); try { await fn(); closeFlag(); afterMark(title); ok(); } catch (e) { msg(e.message); } };
+  $("#fd-fp-open")?.addEventListener("click", () => { $("#fd-fp").hidden = false; $("#fd-fp-open").hidden = true; $("#fd-fp-open").setAttribute("aria-expanded", "true"); document.querySelector('#fd-body input[name="fp"]')?.focus(); });
   document.querySelectorAll('#fd-body input[name="fp"]').forEach((r) => r.addEventListener("change", () => { $("#fd-flag").disabled = false; msg(""); }));
   $("#fd-flag")?.addEventListener("click", () => {
     const kind = document.querySelector('#fd-body input[name="fp"]:checked')?.value;
@@ -878,7 +890,7 @@ function openFlag(v) {
       () => toast(`Allocated to ${initials}.`));
   });
   $("#fd-init").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#fd-alloc").click(); } });
-  (document.querySelector('#fd-body input[name="fp"]') || $("#fd-init")).focus();
+  $("#fd-init").focus();
   track("modal_open", "flag or allocate");
 }
 // the Task progress and other-marker controls: one handler for the whole dialog, refreshing it in place
