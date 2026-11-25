@@ -547,13 +547,13 @@ async function loadBreachExtras(v) {
 }
 const BASIS = { text: "a place name in its description", postcode: "a postcode in its description", "companies-house": "its Companies House registered office",
   manual: "set manually by an admin" };
-function flagsHtml(v) {                       // what is on this breach: a false-positive flag, and every task or marker with its dates
+function flagsHtml(v) {                       // the false-positive flag, and every task or marker with its dates and the buttons to move it along
   const f = v.flag, ms = v.markers || [];
-  const rows = ms.map((m) => `<div class="fl-row"><span class="badge mk ${m.status}${m.builtin ? " alloc" : ""}" style="--mk:${safeColour(m.colour)}">${mkIcon(m)}${esc(mkShort(m.name))}</span>
-    <span><b>${esc(MK_STATUS[m.status])}</b>${m.status === "unallocated" ? "" : ` · ${esc(m.initials)}`} <span class="meta">${m.status === "unallocated" ? "marked" : "allocated"} ${esc(fmtDay(m.allocated_at))}${m.started_at ? `, started ${esc(fmtDay(m.started_at))}` : ""}${m.completed_at ? `, completed ${esc(fmtDay(m.completed_at))}` : ""}</span></span></div>`).join("");
   const fp = f ? `<div class="fl-row"><span class="badge fp">false positive</span><span>${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""} <span class="meta">by ${esc(f.by)}, ${esc(fmtDay(f.at))}${f.applied ? "" : ", not in effect now"}</span></span></div>` : "";
-  return `${fp}${rows}${!fp && !rows ? '<p class="hint" style="margin:0 0 8px">No flag or task on this breach yet.</p>' : ""}
-    <button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate&hellip;</button>`;
+  const types = MKTYPES.filter((t) => t.active || ms.some((m) => m.type_id === t.id));
+  const blocks = types.map((t) => markerBlock(v, t, ms.find((m) => m.type_id === t.id))).join("");
+  return `${fp}<div class="fl-blocks">${blocks}</div><p class="fd-msg fl-msg" role="alert"></p>
+    <button class="more" type="button" data-flag="dr">${ICON_FLAG} False positive, release and more&hellip;</button>`;
 }
 function openVictim(v, quiet = false) {
   if (!quiet) track("victim_view", v.post_title);
@@ -823,10 +823,10 @@ function markerBlock(v, t, m) {              // one custom marker: allocate it, 
     <label class="field">Allocated on (optional)<input type="date" class="search mk-when" max="${dtLocal(new Date().toISOString())}"></label>
     <button type="button" class="btn" data-mk="put" data-t="${t.id}">${label}</button></div>`;
   const state = m ? ` <span class="badge mk ${m.status}" style="--mk:${col}">${esc(MK_STATUS[m.status])} · ${esc(m.initials)}</span>` : ' <span class="meta">not set</span>';
-  const body = !m ? form("Allocate")
+  const body = !m || m.status === "unallocated" ? (m ? markerPanel(v, t, m) : "") + form("Allocate")
     : markerPanel(v, t, m) + (m.status === "completed" ? `<p class="hint" style="margin:12px 0 6px">Start it again:</p>${form("Allocate again")}`
       : canEditMarker(m) ? "" : `<p class="hint" style="margin:12px 0 6px">Or take it over:</p>${form("Take over")}`);
-  return `<details class="mkb" data-t="${t.id}" style="--mk:${col}" ${m && m.status !== "completed" ? "open" : ""}><summary><span class="mk-dot" aria-hidden="true"></span><strong>${esc(t.name)}</strong>${state}</summary>${body}</details>`;
+  return `<details class="mkb" data-t="${t.id}" style="--mk:${col}" ${(m && m.status !== "completed") || (!m && t.builtin) ? "open" : ""}><summary><span class="mk-dot" aria-hidden="true"></span><strong>${esc(t.name)}</strong>${state}</summary>${body}</details>`;
 }
 function openFlag(v) {
   if (!v) return;
@@ -900,11 +900,14 @@ async function refreshFlagDialog(title) {
   afterMark(title);
   if (nv) { openFlag(nv); if (card) card.scrollTop = top; }
 }
-$("#fd-body").addEventListener("click", async (e) => {
-  const btn = e.target.closest("[data-mk]");
-  if (!btn || !fdVictim) return;
-  const title = fdVictim.post_title || fdVictim.title, panel = btn.closest(".mkp"), act = btn.dataset.mk;
-  const msg = (t) => { $("#fd-msg").textContent = t || ""; };
+// the task controls work in the flag dialog and in the breach pane's Flags and tasks card
+const mkCtx = (e) => (e.currentTarget.id === "dr-body"
+  ? { v: drawerVictim, msg: (t) => { const m = $("#dr-body .fl-msg"); if (m) m.textContent = t || ""; }, refresh: async (title) => { await afterMark(title); } }
+  : { v: fdVictim, msg: (t) => { $("#fd-msg").textContent = t || ""; }, refresh: refreshFlagDialog });
+const mkClick = async (e) => {
+  const btn = e.target.closest("[data-mk]"), ctx = mkCtx(e);
+  if (!btn || !ctx.v) return;
+  const title = ctx.v.post_title || ctx.v.title, panel = btn.closest(".mkp"), act = btn.dataset.mk, msg = ctx.msg;
   if (act === "edit") { const f = panel.querySelector(".mk-edit"); f.hidden = !f.hidden; btn.setAttribute("aria-expanded", String(!f.hidden)); if (!f.hidden) f.querySelector("input").focus(); return; }
   if (act === "edit-cancel") { const f = panel.querySelector(".mk-edit"); f.hidden = true; panel.querySelector('[data-mk="edit"]').setAttribute("aria-expanded", "false"); return; }
   msg("");
@@ -925,22 +928,23 @@ $("#fd-body").addEventListener("click", async (e) => {
         toast(act === "start" ? "Started" : act === "complete" ? "Completed" : "Reopened");
       }
     }
-    await refreshFlagDialog(title);
+    await ctx.refresh(title);
   } catch (err) { msg(err.message); } finally { btn.disabled = false; }
-});
-$("#fd-body").addEventListener("submit", async (e) => {
-  const form = e.target.closest(".mk-edit");
+};
+const mkSubmit = async (e) => {
+  const form = e.target.closest(".mk-edit"), ctx = mkCtx(e);
   if (!form) return;
   e.preventDefault();
-  const title = fdVictim.post_title || fdVictim.title, id = form.closest(".mkp").dataset.m, msg = (t) => { $("#fd-msg").textContent = t || ""; };
+  const title = ctx.v.post_title || ctx.v.title, id = form.closest(".mkp").dataset.m, msg = ctx.msg;
   const ini = form.querySelector(".mk-e-ini").value.trim().toUpperCase();
   if (!/^[A-Z]{2,4}$/.test(ini)) { msg("Initials must be 2 to 4 letters."); return; }
   try {
-    const was = fdVictim.markers.find((x) => String(x.id) === id) || {}, chg = (cls, key) => { const v = form.querySelector(cls).value; return v === dtLocal(was[key]) ? {} : { [key]: dtIso(v) }; };
+    const was = ctx.v.markers.find((x) => String(x.id) === id) || {}, chg = (cls, key) => { const v = form.querySelector(cls).value; return v === dtLocal(was[key]) ? {} : { [key]: dtIso(v) }; };
     await api(`/api/victims/markers/${id}`, { method: "PATCH", body: { initials: ini, ...chg(".mk-e-alloc", "allocated_at"), ...chg(".mk-e-start", "started_at"), ...chg(".mk-e-done", "completed_at") } });
-    toast("Saved"); await refreshFlagDialog(title);
+    toast("Saved"); await ctx.refresh(title);
   } catch (err) { msg(err.message); }
-});
+};
+for (const id of ["#fd-body", "#dr-body"]) { $(id).addEventListener("click", mkClick); $(id).addEventListener("submit", mkSubmit); }
 $("#dr-body").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-gang-go]");
   if (!b) return;
