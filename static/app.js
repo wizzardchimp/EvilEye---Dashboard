@@ -142,17 +142,17 @@ const newBadge = (v) => (v.new ? ' <span class="badge new">NEW</span>' : "");
 const ICON_FLAG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4"/><path d="M5 4h13l-2.5 4.5L18 13H5"/></svg>';
 const ICON_PERSON = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6.5 8-6.5s8 2.5 8 6.5"/></svg>';
 const flagWhat = (f) => (f.kind === "not_uk" ? "not in the UK" : `not in ${f.region}`);
-const flagText = (f) => `Flagged as a false positive by ${f.by} (${flagWhat(f)})${f.note ? `: "${f.note}"` : ""}, ${fmtTime(f.at)}`;
-const allocText = (a) => `Allocated to ${a.initials}, set by ${a.by}, ${fmtTime(a.at)}`;
+const flagText = (f) => `Flagged as a false positive by ${f.by} (${flagWhat(f)})${f.note ? `: "${f.note}"` : ""}, ${fmtDay(f.at)}`;
+const allocText = (a) => `Allocated to ${a.initials}, set by ${a.by}, ${fmtDay(a.at)}`;
 // ---- markers: Task (built in) and custom ones. A marker is live until it is completed.
 const safeColour = (c) => (/^#[0-9a-f]{6}$/i.test(c || "") ? c : "#94a2b7");      // only ever a plain six-digit colour reaches a style attribute
 const MK_STATUS = { unallocated: "Unallocated", allocated: "Allocated", started: "In progress", completed: "Completed" };
 const ICON_CROWN = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" fill-opacity=".25" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18 2 7l5.5 4.5L12 4l4.5 7.5L22 7l-1 11z"/><path d="M4 21.5h16" fill="none"/></svg>';
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>';
 const ICON_TICK = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 12 10 18 20 6"/></svg>';
-const markerText = (m) => m.status === "unallocated" ? `${m.name}: not allocated yet, marked by ${m.by}, ${fmtTime(m.allocated_at)} (unallocated)`
-  : (m.builtin ? allocText({ initials: m.initials, by: m.by, at: m.allocated_at }) : `${m.name}: allocated to ${m.initials}, set by ${m.by}, ${fmtTime(m.allocated_at)}`)
-  + (m.started_at ? `, started ${fmtTime(m.started_at)}` : "") + (m.completed_at ? `, completed ${fmtTime(m.completed_at)}` : "") + ` (${MK_STATUS[m.status].toLowerCase()})`;
+const markerText = (m) => m.status === "unallocated" ? `${m.name}: not allocated yet, marked by ${m.by}, ${fmtDay(m.allocated_at)} (unallocated)`
+  : (m.builtin ? allocText({ initials: m.initials, by: m.by, at: m.allocated_at }) : `${m.name}: allocated to ${m.initials}, set by ${m.by}, ${fmtDay(m.allocated_at)}`)
+  + (m.started_at ? `, started ${fmtDay(m.started_at)}` : "") + (m.completed_at ? `, completed ${fmtDay(m.completed_at)}` : "") + ` (${MK_STATUS[m.status].toLowerCase()})`;
 const mkShort = (n) => (n.length > 12 ? n.slice(0, 11) + "…" : n);        // the same shortening on every badge and in the preview
 // the Task wears a crown (with a play or a tick beside it once it is in progress or done); the others keep the person
 const mkIcon = (m) => (m.builtin ? ICON_CROWN + (m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : "")
@@ -550,8 +550,8 @@ const BASIS = { text: "a place name in its description", postcode: "a postcode i
 function flagsHtml(v) {                       // what is on this breach: a false-positive flag, and every task or marker with its dates
   const f = v.flag, ms = v.markers || [];
   const rows = ms.map((m) => `<div class="fl-row"><span class="badge mk ${m.status}${m.builtin ? " alloc" : ""}" style="--mk:${safeColour(m.colour)}">${mkIcon(m)}${esc(mkShort(m.name))}</span>
-    <span><b>${esc(MK_STATUS[m.status])}</b>${m.status === "unallocated" ? "" : ` · ${esc(m.initials)}`} <span class="meta">${m.status === "unallocated" ? "marked" : "allocated"} ${esc(fmtTime(m.allocated_at))}${m.started_at ? `, started ${esc(fmtTime(m.started_at))}` : ""}${m.completed_at ? `, completed ${esc(fmtTime(m.completed_at))}` : ""}</span></span></div>`).join("");
-  const fp = f ? `<div class="fl-row"><span class="badge fp">false positive</span><span>${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""} <span class="meta">by ${esc(f.by)}, ${esc(fmtTime(f.at))}${f.applied ? "" : ", not in effect now"}</span></span></div>` : "";
+    <span><b>${esc(MK_STATUS[m.status])}</b>${m.status === "unallocated" ? "" : ` · ${esc(m.initials)}`} <span class="meta">${m.status === "unallocated" ? "marked" : "allocated"} ${esc(fmtDay(m.allocated_at))}${m.started_at ? `, started ${esc(fmtDay(m.started_at))}` : ""}${m.completed_at ? `, completed ${esc(fmtDay(m.completed_at))}` : ""}</span></span></div>`).join("");
+  const fp = f ? `<div class="fl-row"><span class="badge fp">false positive</span><span>${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""} <span class="meta">by ${esc(f.by)}, ${esc(fmtDay(f.at))}${f.applied ? "" : ", not in effect now"}</span></span></div>` : "";
   return `${fp}${rows}${!fp && !rows ? '<p class="hint" style="margin:0 0 8px">No flag or task on this breach yet.</p>' : ""}
     <button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate&hellip;</button>`;
 }
@@ -788,15 +788,15 @@ async function undoFlag(title, quiet) {
   await api(`/api/victims/flag?title=${encodeURIComponent(title)}`, { method: "DELETE" });
   if (!quiet) toast("Flag removed"); afterMark(title);
 }
-const dtLocal = (iso) => { if (!iso) return ""; const d = new Date(iso), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
-const dtIso = (v) => (v ? new Date(v).toISOString() : null);           // a datetime-local field is the browser's own clock
+const dtLocal = (iso) => { if (!iso) return ""; const d = new Date(iso), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };      // dates only: a day, no time
+const dtIso = (v) => { if (!v) return null; const [y, m, d] = v.split("-").map(Number), t = new Date(); return (y === t.getFullYear() && m === t.getMonth() + 1 && d === t.getDate() ? t : new Date(y, m - 1, d, 12)).toISOString(); };    // today = now; another day = midday, so two dates on one day agree
 const canEditMarker = (m) => ME.role === "admin" || ME.username === m.by || !!(m.initials && (ME.initials || "") === m.initials);
 const whoMarker = (m) => (m.initials ? `${esc(m.initials)} (${esc(m.by)})` : `${esc(m.by)} (who marked it)`);
 function markerPanel(v, t, m) {              // the dates of one marker, and what can be done to it
   const can = canEditMarker(m), none = (x) => `<span class="meta">${x}</span>`;
   if (m.status === "unallocated") {         // marked as a Task but nobody has taken it: nothing to start until someone does
     return `<div class="mkp" data-m="${m.id}" data-t="${t.id}"><dl class="mk-dates">
-      <div><dt>Marked</dt><dd>${esc(m.by)}<br><span class="meta">${esc(fmtTime(m.allocated_at))}</span></dd></div>
+      <div><dt>Marked</dt><dd>${esc(m.by)}<br><span class="meta">${esc(fmtDay(m.allocated_at))}</span></dd></div>
       <div><dt>Allocated</dt><dd>${none("Not allocated yet")}</dd></div>
       <div><dt>Started</dt><dd>${none("Not started")}</dd></div></dl>
       <p class="hint" style="margin:10px 0 0">Nobody has this Task yet. Put your initials on it below to take it, then it can be started.</p></div>`;
@@ -807,20 +807,20 @@ function markerPanel(v, t, m) {              // the dates of one marker, and wha
       <button type="button" class="more" data-mk="edit" aria-expanded="false">Edit dates and initials</button>${t.builtin && m.status === "allocated" ? '<button type="button" class="more" data-mk="unallocate">Unallocate</button>' : ""}${t.builtin ? "" : '<button type="button" class="more danger" data-mk="remove">Remove</button>'}</div>
     <form class="mk-edit" hidden><div class="mk-grid">
       <label class="field">Initials<input class="search mk-e-ini" maxlength="4" value="${esc(m.initials)}" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
-      <label class="field">Allocated<input type="datetime-local" class="search mk-e-alloc" required value="${dtLocal(m.allocated_at)}" max="${dtLocal(new Date().toISOString())}"></label>
-      <label class="field">Started<input type="datetime-local" class="search mk-e-start" value="${dtLocal(m.started_at)}" max="${dtLocal(new Date().toISOString())}"></label>
-      <label class="field">Completed<input type="datetime-local" class="search mk-e-done" value="${dtLocal(m.completed_at)}" max="${dtLocal(new Date().toISOString())}"></label></div>
+      <label class="field">Allocated<input type="date" class="search mk-e-alloc" required value="${dtLocal(m.allocated_at)}" max="${dtLocal(new Date().toISOString())}"></label>
+      <label class="field">Started<input type="date" class="search mk-e-start" value="${dtLocal(m.started_at)}" max="${dtLocal(new Date().toISOString())}"></label>
+      <label class="field">Completed<input type="date" class="search mk-e-done" value="${dtLocal(m.completed_at)}" max="${dtLocal(new Date().toISOString())}"></label></div>
       <p class="hint" style="margin:6px 0 10px">Leave Started or Completed empty if that has not happened yet.</p>
       <div class="fd-row"><button type="submit" class="btn">Save changes</button><button type="button" class="more" data-mk="edit-cancel">Cancel</button></div></form>`;
   return `<div class="mkp" data-m="${m.id}" data-t="${t.id}"><dl class="mk-dates">
-    <div><dt>Allocated</dt><dd>${esc(m.initials)} <span class="meta">set by ${esc(m.by)}</span><br><span class="meta">${esc(fmtTime(m.allocated_at))}</span></dd></div>
-    <div><dt>Started</dt><dd>${m.started_at ? esc(fmtTime(m.started_at)) : none("Not started")}</dd></div>
-    <div><dt>Completed</dt><dd>${m.completed_at ? esc(fmtTime(m.completed_at)) : none("Not completed")}</dd></div></dl>${acts}</div>`;
+    <div><dt>Allocated</dt><dd>${esc(m.initials)} <span class="meta">set by ${esc(m.by)}</span><br><span class="meta">${esc(fmtDay(m.allocated_at))}</span></dd></div>
+    <div><dt>Started</dt><dd>${m.started_at ? esc(fmtDay(m.started_at)) : none("Not started")}</dd></div>
+    <div><dt>Completed</dt><dd>${m.completed_at ? esc(fmtDay(m.completed_at)) : none("Not completed")}</dd></div></dl>${acts}</div>`;
 }
 function markerBlock(v, t, m) {              // one custom marker: allocate it, or see and move it along
   const initial = ME.initials || suggestInitials(ME.username), col = safeColour(t.colour);
   const form = (label) => `<div class="fd-row mk-new"><label class="field">Initials<input class="search fd-init mk-ini" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(initial)}"></label>
-    <label class="field">Allocated on (optional)<input type="datetime-local" class="search mk-when" max="${dtLocal(new Date().toISOString())}"></label>
+    <label class="field">Allocated on (optional)<input type="date" class="search mk-when" max="${dtLocal(new Date().toISOString())}"></label>
     <button type="button" class="btn" data-mk="put" data-t="${t.id}">${label}</button></div>`;
   const state = m ? ` <span class="badge mk ${m.status}" style="--mk:${col}">${esc(MK_STATUS[m.status])} · ${esc(m.initials)}</span>` : ' <span class="meta">not set</span>';
   const body = !m ? form("Allocate")
@@ -839,9 +839,9 @@ function openFlag(v) {
   const canUndo = f && (isAdmin || ME.username === f.by);
   const canRelease = a && (isAdmin || ME.username === a.by || (ME.initials || "") === a.initials);
   const status = [
-    f ? `<div class="fd-status fp"><div class="fd-st-text"><strong>Flagged as a false positive</strong> by ${esc(f.by)}: ${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""}. <span class="meta">${esc(fmtTime(f.at))}</span>${f.applied ? "" : `<br><span class="meta">Not in effect right now: ${v.manual ? "an admin set this region by hand" : "the automatic region has changed since"}.</span>`}${canUndo ? "" : `<br><span class="meta">Only the person who flagged it (${esc(f.by)}) or an admin can undo this flag.</span>`}</div>${canUndo ? '<button type="button" class="more" id="fd-unflag">Undo flag</button>' : ""}</div>` : "",
-    unalloc ? `<div class="fd-status al"><div class="fd-st-text"><strong>Marked as a Task, not allocated yet</strong> by ${esc(taskM.by)}. <span class="meta">${esc(fmtTime(taskM.allocated_at))}</span>${canEditMarker(taskM) ? "" : `<br><span class="meta">Only ${whoMarker(taskM)} or an admin can release this.</span>`}</div>${canEditMarker(taskM) ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
-    a ? `<div class="fd-status al"><div class="fd-st-text"><strong>Allocated to ${esc(a.initials)}</strong>, set by ${esc(a.by)}. <span class="meta">${esc(fmtTime(a.at))}</span>${canRelease ? "" : `<br><span class="meta">Only the person who allocated it (${esc(a.by)}), ${esc(a.initials)} or an admin can release this.</span>`}</div>${canRelease ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
+    f ? `<div class="fd-status fp"><div class="fd-st-text"><strong>Flagged as a false positive</strong> by ${esc(f.by)}: ${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""}. <span class="meta">${esc(fmtDay(f.at))}</span>${f.applied ? "" : `<br><span class="meta">Not in effect right now: ${v.manual ? "an admin set this region by hand" : "the automatic region has changed since"}.</span>`}${canUndo ? "" : `<br><span class="meta">Only the person who flagged it (${esc(f.by)}) or an admin can undo this flag.</span>`}</div>${canUndo ? '<button type="button" class="more" id="fd-unflag">Undo flag</button>' : ""}</div>` : "",
+    unalloc ? `<div class="fd-status al"><div class="fd-st-text"><strong>Marked as a Task, not allocated yet</strong> by ${esc(taskM.by)}. <span class="meta">${esc(fmtDay(taskM.allocated_at))}</span>${canEditMarker(taskM) ? "" : `<br><span class="meta">Only ${whoMarker(taskM)} or an admin can release this.</span>`}</div>${canEditMarker(taskM) ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
+    a ? `<div class="fd-status al"><div class="fd-st-text"><strong>Allocated to ${esc(a.initials)}</strong>, set by ${esc(a.by)}. <span class="meta">${esc(fmtDay(a.at))}</span>${canRelease ? "" : `<br><span class="meta">Only the person who allocated it (${esc(a.by)}), ${esc(a.initials)} or an admin can release this.</span>`}</div>${canRelease ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
   ].join("");
   const placedNow = placed(v), canFlag = !f && !v.manual && v.rocu !== "Overseas / not UK";
   const fpSection = canFlag ? `<div class="fd-sect"><button type="button" class="more" id="fd-fp-open" aria-expanded="false" aria-controls="fd-fp">False positive&hellip;</button>
@@ -858,7 +858,7 @@ function openFlag(v) {
   const allocSection = `<div class="fd-sect"><h4>${a ? "Take over" : "Allocate"}</h4>
       <p class="hint">${a ? `Currently ${esc(a.initials)}. Put your own initials on it to take over.` : unalloc ? "Nobody has this Task yet. Put your initials on it to take it." : "Put your initials on this victim to show you are working on it."}</p>
       <div class="fd-row"><label class="field">Initials<input id="fd-init" class="search fd-init" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(initial)}"></label>
-        <label class="field">Allocated on (optional)<input id="fd-when" type="datetime-local" class="search" max="${dtLocal(new Date().toISOString())}"></label>
+        <label class="field">Allocated on (optional)<input id="fd-when" type="date" class="search" max="${dtLocal(new Date().toISOString())}"></label>
         <label class="chk"><input type="checkbox" id="fd-remember" ${ME.initials ? "" : "checked"}> Remember as mine</label>
         <button type="button" class="btn" id="fd-alloc">${a ? "Take over" : "Allocate"}</button></div>${liveTask ? "" : `
       <p class="hint" style="margin:12px 0 6px">Or mark it as a Task for someone to pick up, without anyone's initials yet:</p>
@@ -936,7 +936,8 @@ $("#fd-body").addEventListener("submit", async (e) => {
   const ini = form.querySelector(".mk-e-ini").value.trim().toUpperCase();
   if (!/^[A-Z]{2,4}$/.test(ini)) { msg("Initials must be 2 to 4 letters."); return; }
   try {
-    await api(`/api/victims/markers/${id}`, { method: "PATCH", body: { initials: ini, allocated_at: dtIso(form.querySelector(".mk-e-alloc").value), started_at: dtIso(form.querySelector(".mk-e-start").value), completed_at: dtIso(form.querySelector(".mk-e-done").value) } });
+    const was = fdVictim.markers.find((x) => String(x.id) === id) || {}, chg = (cls, key) => { const v = form.querySelector(cls).value; return v === dtLocal(was[key]) ? {} : { [key]: dtIso(v) }; };
+    await api(`/api/victims/markers/${id}`, { method: "PATCH", body: { initials: ini, ...chg(".mk-e-alloc", "allocated_at"), ...chg(".mk-e-start", "started_at"), ...chg(".mk-e-done", "completed_at") } });
     toast("Saved"); await refreshFlagDialog(title);
   } catch (err) { msg(err.message); }
 });
@@ -1141,8 +1142,9 @@ function secsText(s) {                                  // "5d 2h", "3h 10m", "1
   const d = Math.floor(s / 1440), h = Math.floor((s % 1440) / 60), m = s % 60;
   return d ? `${d}d${h ? ` ${h}h` : ""}` : h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
 }
+const fmtDay = (iso) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 function fmtShort(iso) {                                // "22 Nov, 12:42" (with the year if it is not this one)
-  const d = new Date(iso), o = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  const d = new Date(iso), o = { day: "numeric", month: "short" };
   if (d.getFullYear() !== new Date().getFullYear()) o.year = "numeric";
   return d.toLocaleString(undefined, o);
 }
@@ -1158,14 +1160,14 @@ function trHead() {
 }
 function trDetail(x) {
   const gone = !x.rocu && !x.group;
-  const started = x.started_at ? `${esc(fmtTime(x.started_at))}<div class="meta">after waiting ${esc(secsText(x.to_start_s))}</div>`
+  const started = x.started_at ? `${esc(fmtDay(x.started_at))}<div class="meta">after waiting ${esc(secsText(x.to_start_s))}</div>`
     : x.status === "completed" ? "Not recorded" : x.status === "unallocated" ? "Not started yet<div class=\"meta\">nobody has taken it</div>" : `Not started yet<div class="meta">waiting ${esc(secsText(x.took_s))}</div>`;
-  const done = x.completed_at ? `${esc(fmtTime(x.completed_at))}<div class="meta">${x.working_s !== null ? `worked on for ${esc(secsText(x.working_s))} &middot; ` : ""}${esc(secsText(x.to_finish_s))} from allocation to completion</div>` : "Not completed";
+  const done = x.completed_at ? `${esc(fmtDay(x.completed_at))}<div class="meta">${x.working_s !== null ? `worked on for ${esc(secsText(x.working_s))} &middot; ` : ""}${esc(secsText(x.to_finish_s))} from allocation to completion</div>` : "Not completed";
   return `<div class="tr-detail"><dl class="tr-dl">
       <div><dt>Place</dt><dd>${gone ? "No longer in the feed" : esc(x.rocu === "Unplaced" ? "Region unknown" : x.rocu) + (x.town && x.rocu !== "Unplaced" ? " &middot; " + esc(x.town) : "")}</dd></div>
       <div><dt>Gang and sector</dt><dd>${esc([x.group, x.sector].filter(Boolean).join(" · ") || "Not known")}</dd></div>
-      <div><dt>${x.status === "unallocated" ? "Marked as a Task" : "Allocated"}</dt><dd>${x.status === "unallocated" ? `Not allocated yet<div class="meta">marked by ${esc(x.by)}, ${esc(fmtTime(x.allocated_at))}, unallocated for ${esc(secsText(x.took_s))} so far</div>`
-        : `${esc(fmtTime(x.allocated_at))}<div class="meta">to ${esc(x.initials)}, set by ${esc(x.by)}${x.to_allocate_s ? ` &middot; waited ${esc(secsText(x.to_allocate_s))} for someone to take it` : ""}</div>`}</dd></div>
+      <div><dt>${x.status === "unallocated" ? "Marked as a Task" : "Allocated"}</dt><dd>${x.status === "unallocated" ? `Not allocated yet<div class="meta">marked by ${esc(x.by)}, ${esc(fmtDay(x.allocated_at))}, unallocated for ${esc(secsText(x.took_s))} so far</div>`
+        : `${esc(fmtDay(x.allocated_at))}<div class="meta">to ${esc(x.initials)}, set by ${esc(x.by)}${x.to_allocate_s ? ` &middot; waited ${esc(secsText(x.to_allocate_s))} for someone to take it` : ""}</div>`}</dd></div>
       <div><dt>Started</dt><dd>${started}</dd></div>
       <div><dt>Completed</dt><dd>${done}</dd></div>
       <div><dt>Last changed</dt><dd>${esc(x.updated_by || x.by)}${x.updated_at ? `<div class="meta">${esc(ago(x.updated_at))}</div>` : ""}</dd></div></dl>
