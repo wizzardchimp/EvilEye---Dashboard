@@ -146,17 +146,18 @@ const flagText = (f) => `Flagged as a false positive by ${f.by} (${flagWhat(f)})
 const allocText = (a) => `Allocated to ${a.initials}, set by ${a.by}, ${fmtTime(a.at)}`;
 // ---- markers: Task (built in) and custom ones. A marker is live until it is completed.
 const safeColour = (c) => (/^#[0-9a-f]{6}$/i.test(c || "") ? c : "#94a2b7");      // only ever a plain six-digit colour reaches a style attribute
-const MK_STATUS = { allocated: "Allocated", started: "In progress", completed: "Completed" };
+const MK_STATUS = { unallocated: "Unallocated", allocated: "Allocated", started: "In progress", completed: "Completed" };
 const ICON_CROWN = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" fill-opacity=".25" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18 2 7l5.5 4.5L12 4l4.5 7.5L22 7l-1 11z"/><path d="M4 21.5h16" fill="none"/></svg>';
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>';
 const ICON_TICK = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 12 10 18 20 6"/></svg>';
-const markerText = (m) => (m.builtin ? allocText({ initials: m.initials, by: m.by, at: m.allocated_at }) : `${m.name}: allocated to ${m.initials}, set by ${m.by}, ${fmtTime(m.allocated_at)}`)
+const markerText = (m) => m.status === "unallocated" ? `${m.name}: not allocated yet, marked by ${m.by}, ${fmtTime(m.allocated_at)} (unallocated)`
+  : (m.builtin ? allocText({ initials: m.initials, by: m.by, at: m.allocated_at }) : `${m.name}: allocated to ${m.initials}, set by ${m.by}, ${fmtTime(m.allocated_at)}`)
   + (m.started_at ? `, started ${fmtTime(m.started_at)}` : "") + (m.completed_at ? `, completed ${fmtTime(m.completed_at)}` : "") + ` (${MK_STATUS[m.status].toLowerCase()})`;
 const mkShort = (n) => (n.length > 12 ? n.slice(0, 11) + "…" : n);        // the same shortening on every badge and in the preview
 // the Task wears a crown (with a play or a tick beside it once it is in progress or done); the others keep the person
 const mkIcon = (m) => (m.builtin ? ICON_CROWN + (m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : "")
   : m.status === "completed" ? ICON_TICK : m.status === "started" ? ICON_PLAY : ICON_PERSON);
-const mkBadge = (m) => `<span class="badge${m.builtin ? " alloc" : ""} mk ${m.status}" style="--mk:${safeColour(m.colour)}" title="${esc(markerText(m))}">${mkIcon(m)}${m.builtin ? "" : esc(mkShort(m.name)) + " "}${esc(m.initials)}</span>`;
+const mkBadge = (m) => `<span class="badge${m.builtin ? " alloc" : ""} mk ${m.status}" style="--mk:${safeColour(m.colour)}" title="${esc(markerText(m))}">${mkIcon(m)}${m.builtin ? "" : esc(mkShort(m.name)) + " "}${m.status === "unallocated" ? "Unallocated" : esc(m.initials)}</span>`;
 const liveMarkers = (v) => (v.markers || []).filter((m) => m.status !== "completed");
 const marks = (v, all) => [
   v.flag && v.flag.applied ? `<span class="badge fp" title="${esc(flagText(v.flag))}">false positive</span>` : "",
@@ -779,13 +780,21 @@ async function undoFlag(title, quiet) {
 }
 const dtLocal = (iso) => { if (!iso) return ""; const d = new Date(iso), p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 const dtIso = (v) => (v ? new Date(v).toISOString() : null);           // a datetime-local field is the browser's own clock
-const canEditMarker = (m) => ME.role === "admin" || ME.username === m.by || (ME.initials || "") === m.initials;
+const canEditMarker = (m) => ME.role === "admin" || ME.username === m.by || !!(m.initials && (ME.initials || "") === m.initials);
+const whoMarker = (m) => (m.initials ? `${esc(m.initials)} (${esc(m.by)})` : `${esc(m.by)} (who marked it)`);
 function markerPanel(v, t, m) {              // the dates of one marker, and what can be done to it
   const can = canEditMarker(m), none = (x) => `<span class="meta">${x}</span>`;
-  const acts = !can ? `<p class="hint" style="margin:8px 0 0">Only ${esc(m.initials)} (${esc(m.by)}) or an admin can change this.</p>`
+  if (m.status === "unallocated") {         // marked as a Task but nobody has taken it: nothing to start until someone does
+    return `<div class="mkp" data-m="${m.id}" data-t="${t.id}"><dl class="mk-dates">
+      <div><dt>Marked</dt><dd>${esc(m.by)}<br><span class="meta">${esc(fmtTime(m.allocated_at))}</span></dd></div>
+      <div><dt>Allocated</dt><dd>${none("Not allocated yet")}</dd></div>
+      <div><dt>Started</dt><dd>${none("Not started")}</dd></div></dl>
+      <p class="hint" style="margin:10px 0 0">Nobody has this Task yet. Put your initials on it below to take it, then it can be started.</p></div>`;
+  }
+  const acts = !can ? `<p class="hint" style="margin:8px 0 0">Only ${whoMarker(m)} or an admin can change this.</p>`
     : `<div class="mk-actions">${m.status === "allocated" ? '<button type="button" class="btn" data-mk="start">Start now</button><button type="button" class="more" data-mk="complete">Complete now</button>'
       : m.status === "started" ? '<button type="button" class="btn" data-mk="complete">Complete now</button>' : '<button type="button" class="more" data-mk="reopen">Reopen</button>'}
-      <button type="button" class="more" data-mk="edit" aria-expanded="false">Edit dates and initials</button>${t.builtin ? "" : '<button type="button" class="more danger" data-mk="remove">Remove</button>'}</div>
+      <button type="button" class="more" data-mk="edit" aria-expanded="false">Edit dates and initials</button>${t.builtin && m.status === "allocated" ? '<button type="button" class="more" data-mk="unallocate">Unallocate</button>' : ""}${t.builtin ? "" : '<button type="button" class="more danger" data-mk="remove">Remove</button>'}</div>
     <form class="mk-edit" hidden><div class="mk-grid">
       <label class="field">Initials<input class="search mk-e-ini" maxlength="4" value="${esc(m.initials)}" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
       <label class="field">Allocated<input type="datetime-local" class="search mk-e-alloc" required value="${dtLocal(m.allocated_at)}" max="${dtLocal(new Date().toISOString())}"></label>
@@ -815,10 +824,13 @@ function openFlag(v) {
   const title = v.post_title || v.title, f = v.flag, a = v.alloc, isAdmin = ME.role === "admin";
   const region = v.rocu === "Unplaced" ? "region unknown" : v.rocu === "Overseas / not UK" ? "overseas / not UK" : v.rocu;
   $("#fd-sub").innerHTML = `<strong>${esc(title)}</strong> · ${esc(region)}`;
+  const taskT = MKTYPES.find((t) => t.builtin), taskM = taskT && (v.markers || []).find((m) => m.type_id === taskT.id);
+  const unalloc = taskM && taskM.status === "unallocated", liveTask = taskM && taskM.status !== "completed";
   const canUndo = f && (isAdmin || ME.username === f.by);
   const canRelease = a && (isAdmin || ME.username === a.by || (ME.initials || "") === a.initials);
   const status = [
     f ? `<div class="fd-status fp"><div class="fd-st-text"><strong>Flagged as a false positive</strong> by ${esc(f.by)}: ${esc(flagWhat(f))}${f.note ? ` &ldquo;${esc(f.note)}&rdquo;` : ""}. <span class="meta">${esc(fmtTime(f.at))}</span>${f.applied ? "" : `<br><span class="meta">Not in effect right now: ${v.manual ? "an admin set this region by hand" : "the automatic region has changed since"}.</span>`}${canUndo ? "" : `<br><span class="meta">Only the person who flagged it (${esc(f.by)}) or an admin can undo this flag.</span>`}</div>${canUndo ? '<button type="button" class="more" id="fd-unflag">Undo flag</button>' : ""}</div>` : "",
+    unalloc ? `<div class="fd-status al"><div class="fd-st-text"><strong>Marked as a Task, not allocated yet</strong> by ${esc(taskM.by)}. <span class="meta">${esc(fmtTime(taskM.allocated_at))}</span>${canEditMarker(taskM) ? "" : `<br><span class="meta">Only ${whoMarker(taskM)} or an admin can release this.</span>`}</div>${canEditMarker(taskM) ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
     a ? `<div class="fd-status al"><div class="fd-st-text"><strong>Allocated to ${esc(a.initials)}</strong>, set by ${esc(a.by)}. <span class="meta">${esc(fmtTime(a.at))}</span>${canRelease ? "" : `<br><span class="meta">Only the person who allocated it (${esc(a.by)}), ${esc(a.initials)} or an admin can release this.</span>`}</div>${canRelease ? '<button type="button" class="more" id="fd-release">Release</button>' : ""}</div>` : "",
   ].join("");
   const placedNow = placed(v), canFlag = !f && !v.manual && v.rocu !== "Overseas / not UK";
@@ -833,12 +845,13 @@ function openFlag(v) {
     : (!f && v.manual ? `<div class="fd-sect"><h4>False positive</h4><p class="hint">An admin set this victim's region by hand, so it can't be flagged. Ask an admin to change it.</p></div>` : "");
   const initial = ME.initials || suggestInitials(ME.username);
   const allocSection = `<div class="fd-sect"><h4>${a ? "Take over" : "Allocate"}</h4>
-      <p class="hint">${a ? `Currently ${esc(a.initials)}. Put your own initials on it to take over.` : "Put your initials on this victim to show you are working on it."}</p>
+      <p class="hint">${a ? `Currently ${esc(a.initials)}. Put your own initials on it to take over.` : unalloc ? "Nobody has this Task yet. Put your initials on it to take it." : "Put your initials on this victim to show you are working on it."}</p>
       <div class="fd-row"><label class="field">Initials<input id="fd-init" class="search fd-init" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" value="${esc(initial)}"></label>
         <label class="field">Allocated on (optional)<input id="fd-when" type="datetime-local" class="search" max="${dtLocal(new Date().toISOString())}"></label>
         <label class="chk"><input type="checkbox" id="fd-remember" ${ME.initials ? "" : "checked"}> Remember as mine</label>
-        <button type="button" class="btn" id="fd-alloc">${a ? "Take over" : "Allocate"}</button></div></div>`;
-  const taskT = MKTYPES.find((t) => t.builtin), taskM = taskT && (v.markers || []).find((m) => m.type_id === taskT.id);
+        <button type="button" class="btn" id="fd-alloc">${a ? "Take over" : "Allocate"}</button></div>${liveTask ? "" : `
+      <p class="hint" style="margin:12px 0 6px">Or mark it as a Task for someone to pick up, without anyone's initials yet:</p>
+      <button type="button" class="more" id="fd-unalloc">Mark as a Task, unallocated</button>`}</div>`;
   const progress = taskM ? `<div class="fd-sect" style="--mk:${safeColour(taskM.colour)}"><h4>Task progress <span class="badge mk ${taskM.status}" style="--mk:${safeColour(taskM.colour)}">${esc(MK_STATUS[taskM.status])}</span></h4>${markerPanel(v, taskT, taskM)}</div>` : "";
   const customs = MKTYPES.filter((t) => !t.builtin && (t.active || (v.markers || []).some((m) => m.type_id === t.id)));
   const others = customs.length ? `<div class="fd-sect"><h4>Other markers</h4><p class="hint">Each works like the Task: initials, then when it was allocated, started and completed. It shows in the live banner until it is completed.</p>${customs.map((t) => markerBlock(v, t, (v.markers || []).find((m) => m.type_id === t.id))).join("")}</div>` : "";
@@ -855,6 +868,7 @@ function openFlag(v) {
       () => toast(`Flagged: ${kind === "not_uk" ? "not in the UK" : "not in " + v.rocu}.`, { label: "Undo", fn: () => undoFlag(title, true).then(() => toast("Flag removed")).catch((e) => toast(e.message)) }));
   });
   $("#fd-unflag")?.addEventListener("click", () => run(() => api(`/api/victims/flag?title=${encodeURIComponent(title)}`, { method: "DELETE" }), () => toast("Flag removed")));
+  $("#fd-unalloc")?.addEventListener("click", () => run(() => api("/api/victims/markers", { method: "PUT", body: { title, unallocated: true } }), () => toast("Marked as a Task: unallocated")));
   $("#fd-release")?.addEventListener("click", () => run(() => api(`/api/victims/alloc?title=${encodeURIComponent(title)}`, { method: "DELETE" }), () => toast("Released")));
   $("#fd-alloc").addEventListener("click", () => {
     const initials = $("#fd-init").value.trim().toUpperCase();
@@ -892,6 +906,7 @@ $("#fd-body").addEventListener("click", async (e) => {
     } else {
       const id = panel.dataset.m;
       if (act === "remove") { if (!confirm("Remove this marker from the breach? Its dates are lost.")) return; await api(`/api/victims/markers/${id}`, { method: "DELETE" }); toast("Marker removed"); }
+      else if (act === "unallocate") { if (!confirm("Take the initials off this Task? It stays on the breach as a Task that nobody has taken yet.")) return; await api(`/api/victims/markers/${id}`, { method: "PATCH", body: { initials: "" } }); toast("Unallocated"); }
       else {
         const body = act === "start" ? { started_at: "now" } : act === "complete" ? { completed_at: "now" } : { completed_at: null };
         await api(`/api/victims/markers/${id}`, { method: "PATCH", body });
@@ -962,7 +977,7 @@ const EVENT_LABEL = {
   login: "Signed in", login_failed: "Failed sign-in", logout: "Signed out", page_open: "Opened the dashboard", refresh: "Refreshed data",
   tab_view: "Viewed a page", search: "Searched", filter: "Changed a filter", region_change: "Changed region", modal_open: "Opened a breakdown",
   victim_view: "Opened victim details", copy_leak_site: "Copied a leak-site address", link_click: "Clicked an outside link", export: "Exported data",
-  alerts_settings: "Switched alert emails on or off", alerts_group: "Changed a group's alerts", alerts_test: "Sent a test email", email_alerts: "Changed their own alert emails",
+  task_unallocated: "Marked a breach as a Task, unallocated", alerts_settings: "Switched alert emails on or off", alerts_group: "Changed a group's alerts", alerts_test: "Sent a test email", email_alerts: "Changed their own alert emails",
   screen_wake_on: "Screen wake on", screen_wake_off: "Screen wake off", screen_wake_failed: "Screen wake failed",
   password_change: "Changed own password", password_change_failed: "Password change failed",
   user_create: "Created a user", user_update: "Updated a user", user_delete: "Deleted a user",
@@ -1062,7 +1077,8 @@ const busy = async (form, fn) => {            // one request at a time per form:
   try { await fn(); } finally { btn.disabled = false; }
 };
 // ------------------------------------------------------------------ the live-tasks banner (Overview, above the two lists)
-const lbOnly = () => { try { return localStorage.getItem("evileye-lb-region") === "1"; } catch (e) { return false; } };
+const lbOnly = () => { try { return localStorage.getItem("evileye-lb-region") !== "0"; } catch (e) { return true; } };      // with a region chosen the banner is that region's, unless somebody has switched that off
+const agoShort = (iso) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 90 ? "just now" : secsText(s).split(" ")[0] + " ago"; };
 async function loadLive() {
   const bar = $("#livebar");
   if (!ME || !ME.database) { bar.hidden = true; return; }
@@ -1070,25 +1086,18 @@ async function loadLive() {
   $("#lb-only-wrap").hidden = !region; $("#lb-region").textContent = region === "Unplaced" ? "region unknown" : region; $("#lb-only").checked = only;
   try {
     const d = await api(`/api/markers/live${only ? "?" + new URLSearchParams({ rocu: region }) : ""}`);
-    bar.hidden = !d.total && !only && !d.ever;
-    $("#lb-count").textContent = d.total ? `· ${d.total}` : "";
+    const items = d.items.filter((x) => x.status !== "completed");                 // finished tasks are never on the banner
+    bar.hidden = !items.length && !only && !d.ever;
+    $("#lb-count").textContent = items.length ? `· ${d.total}` : "";
     const list = $("#lb-list");
-    list.innerHTML = d.items.length ? d.items.map((x) => `<button type="button" class="lb-tile ${x.status}" role="listitem" data-title="${esc(x.title)}" style="--mk:${safeColour(x.colour)}" title="${esc(markerText(x))}">
+    const place = (x) => (x.rocu === "Unplaced" ? "region unknown" : !x.rocu ? "left the feed" : only ? (x.town || x.rocu) : x.town ? `${x.rocu} · ${x.town}` : x.rocu);
+    list.innerHTML = items.length ? items.map((x) => `<button type="button" class="lb-tile ${x.status}" role="listitem" data-title="${esc(x.title)}" style="--mk:${safeColour(x.colour)}" title="${esc(x.title + " · " + markerText(x))}">
         <span class="lb-name">${esc(x.title)}</span>
-        <span class="lb-row"><span class="badge${x.builtin ? " alloc" : ""} mk ${x.status}" style="--mk:${safeColour(x.colour)}">${mkIcon(x)}${esc(x.name)}</span><b class="lb-ini">${esc(x.initials)}</b><span class="lb-st">${esc(MK_STATUS[x.status])}</span></span>
-        <span class="lb-meta">${esc(x.rocu === "Unplaced" ? "region unknown" : x.rocu || "no longer in the feed")}${x.town && x.rocu && x.rocu !== "Unplaced" ? " · " + esc(x.town) : ""}</span>
-        <span class="lb-meta">allocated ${esc(ago(x.allocated_at))}${x.started_at ? ` · started ${esc(ago(x.started_at))}` : ""}</span></button>`).join("")
+        <span class="lb-row"><span class="badge${x.builtin ? " alloc" : ""} mk ${x.status}" style="--mk:${safeColour(x.colour)}">${mkIcon(x)}${esc(mkShort(x.name))}</span>${x.status === "unallocated" ? "" : `<b class="lb-ini">${esc(x.initials)}</b>`}<span class="lb-st">${esc(MK_STATUS[x.status])}</span></span>
+        <span class="lb-meta"><span class="lb-pl">${esc(place(x))}</span><span class="lb-ago">${x.started_at ? "started" : x.status === "unallocated" ? "marked" : "allocated"} ${esc(agoShort(x.started_at || x.allocated_at))}</span></span></button>`).join("")
       : `<p class="hint" style="margin:0">Nothing live${only ? ` in ${esc(region)}` : ""} right now. Review all tasks to see the finished ones.</p>`;
-    lbFade();
   } catch (e) { /* leave the banner as it was */ }
 }
-function lbFade() {                    // only when there are more tiles than fit: fade the edge that has more beyond it
-  const el = $("#lb-list"), max = el.scrollWidth - el.clientWidth;
-  el.classList.toggle("fade-l", max > 2 && el.scrollLeft > 2);
-  el.classList.toggle("fade-r", max > 2 && el.scrollLeft < max - 2);
-}
-$("#lb-list").addEventListener("scroll", lbFade, { passive: true });
-window.addEventListener("resize", lbFade);
 $("#lb-only").addEventListener("change", () => { try { localStorage.setItem("evileye-lb-region", $("#lb-only").checked ? "1" : "0"); } catch (e) { /* ignore */ } loadLive(); });
 $("#lb-list").addEventListener("click", async (e) => {
   const t = e.target.closest(".lb-tile");
@@ -1102,8 +1111,8 @@ const tr = { region: "", status: "all", type: "", q: "", sort: "status", dir: ""
 const TR_COLS = [["title", "Breach"], ["marker", "Marker"], ["who", "Who"], ["status", "Status"], ["allocated", "Allocated"], ["started", "Started"], ["completed", "Completed"], ["took", "Time"]];
 const TR_SORTS = [["status:", "Needs attention first"], ["allocated:desc", "Allocated: newest first"], ["allocated:asc", "Allocated: oldest first"], ["completed:desc", "Completed: newest first"],
   ["took:desc", "Longest time first"], ["took:asc", "Shortest time first"], ["title:asc", "Breach A to Z"], ["marker:asc", "Marker A to Z"], ["who:asc", "Who A to Z"]];
-const TR_CHIPS = [["all", "All"], ["live", "Live"], ["waiting", "Waiting"], ["started", "In progress"], ["completed", "Completed"]];
-const TR_ST = { allocated: ["wm", "Waiting"], started: ["on", "In progress"], completed: ["src", "Completed"] };
+const TR_CHIPS = [["all", "All"], ["live", "Live"], ["unallocated", "Unallocated"], ["waiting", "Waiting"], ["started", "In progress"], ["completed", "Completed"]];
+const TR_ST = { unallocated: ["un", "Unallocated"], allocated: ["wm", "Waiting"], started: ["on", "In progress"], completed: ["src", "Completed"] };
 function secsText(s) {                                  // "5d 2h", "3h 10m", "12m"
   if (s === null || s === undefined) return "";
   s = Math.max(0, Math.round(s / 60));
@@ -1128,12 +1137,13 @@ function trHead() {
 function trDetail(x) {
   const gone = !x.rocu && !x.group;
   const started = x.started_at ? `${esc(fmtTime(x.started_at))}<div class="meta">after waiting ${esc(secsText(x.to_start_s))}</div>`
-    : x.status === "completed" ? "Not recorded" : `Not started yet<div class="meta">waiting ${esc(secsText(x.took_s))}</div>`;
+    : x.status === "completed" ? "Not recorded" : x.status === "unallocated" ? "Not started yet<div class=\"meta\">nobody has taken it</div>" : `Not started yet<div class="meta">waiting ${esc(secsText(x.took_s))}</div>`;
   const done = x.completed_at ? `${esc(fmtTime(x.completed_at))}<div class="meta">${x.working_s !== null ? `worked on for ${esc(secsText(x.working_s))} &middot; ` : ""}${esc(secsText(x.to_finish_s))} from allocation to completion</div>` : "Not completed";
   return `<div class="tr-detail"><dl class="tr-dl">
       <div><dt>Place</dt><dd>${gone ? "No longer in the feed" : esc(x.rocu === "Unplaced" ? "Region unknown" : x.rocu) + (x.town && x.rocu !== "Unplaced" ? " &middot; " + esc(x.town) : "")}</dd></div>
       <div><dt>Gang and sector</dt><dd>${esc([x.group, x.sector].filter(Boolean).join(" · ") || "Not known")}</dd></div>
-      <div><dt>Allocated</dt><dd>${esc(fmtTime(x.allocated_at))}<div class="meta">to ${esc(x.initials)}, set by ${esc(x.by)}</div></dd></div>
+      <div><dt>${x.status === "unallocated" ? "Marked as a Task" : "Allocated"}</dt><dd>${x.status === "unallocated" ? `Not allocated yet<div class="meta">marked by ${esc(x.by)}, ${esc(fmtTime(x.allocated_at))}, unallocated for ${esc(secsText(x.took_s))} so far</div>`
+        : `${esc(fmtTime(x.allocated_at))}<div class="meta">to ${esc(x.initials)}, set by ${esc(x.by)}${x.to_allocate_s ? ` &middot; waited ${esc(secsText(x.to_allocate_s))} for someone to take it` : ""}</div>`}</dd></div>
       <div><dt>Started</dt><dd>${started}</dd></div>
       <div><dt>Completed</dt><dd>${done}</dd></div>
       <div><dt>Last changed</dt><dd>${esc(x.updated_by || x.by)}${x.updated_at ? `<div class="meta">${esc(ago(x.updated_at))}</div>` : ""}</dd></div></dl>
@@ -1146,9 +1156,9 @@ function trRows(items) {
       <td class="tr-name" data-label="Breach"><button type="button" class="tr-tg" aria-expanded="${open}" aria-controls="trx-${x.id}"><svg class="tr-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg><span class="tr-t">${esc(x.title)}</span></button>
         <div class="meta tr-sub">${esc([x.group, x.sector].filter(Boolean).join(" · "))}</div></td>
       <td data-label="Marker">${trMarker(x)}</td>
-      <td data-label="Who"><b>${esc(x.initials)}</b><div class="meta">by ${esc(x.by)}</div></td>
+      <td data-label="Who"><b>${x.status === "unallocated" ? "&ndash;" : esc(x.initials)}</b><div class="meta">${x.status === "unallocated" ? "nobody yet &middot; marked by" : "by"} ${esc(x.by)}</div></td>
       <td data-label="Status"><span class="badge ${bc}">${x.status === "completed" ? ICON_TICK : x.status === "started" ? ICON_PLAY : ""}${bl}</span></td>
-      <td data-label="Allocated">${trDate(x.allocated_at)}</td><td data-label="Started">${trDate(x.started_at)}</td><td data-label="Completed">${trDate(x.completed_at)}</td>
+      <td data-label="Allocated">${x.status === "unallocated" ? '<span class="meta">Not allocated</span>' : trDate(x.allocated_at)}</td><td data-label="Started">${trDate(x.started_at)}</td><td data-label="Completed">${trDate(x.completed_at)}</td>
       <td data-label="Time"><b>${esc(secsText(x.took_s))}</b>${x.status === "completed" ? "" : '<div class="meta">so far</div>'}</td></tr>
     <tr class="tr-x" id="trx-${x.id}" data-for="${x.id}"${open ? "" : " hidden"}><td colspan="8">${trDetail(x)}</td></tr>`;
   }).join("");

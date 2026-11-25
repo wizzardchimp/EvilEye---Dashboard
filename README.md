@@ -175,7 +175,13 @@ Every victim (in the Overview tickers, the UK Victims table and the details draw
   it cannot be started before it was allocated, completed before it was started, or dated in the future, and the message says which.
   Allocating a completed task again starts a fresh cycle. Initials can be remembered per user. Anyone can **take over** a live task (its dates
   are kept and the new initials go on); only the person who set it, the person with those initials, or an admin can start, complete, edit,
-  reopen or release it, and everyone else is told who can.
+  reopen or release it, and everyone else is told who can. **Unallocate** (offered while a Task has not started) takes the initials off and leaves it
+  as a Task nobody has taken.
+- **Unallocated Task**: a breach can be marked as a Task **without anyone's initials**, with the button **Mark as a Task, unallocated** in the Allocate
+  section of the dialog, for someone to pick up. It is live (it shows in the banner and the lists as a dotted crown badge, "Unallocated", and in
+  the review) but cannot be started or completed until somebody puts their initials on it (the same Allocate box: that is its allocated date, and
+  the review records how long it waited for an owner). Anyone can mark one and anyone can take it; only whoever marked it, or an admin, can release it. Only
+  the Task can be left unallocated, not the custom markers.
 - **Custom markers**: any other marker an admin has created in Settings (below). Each is in the dialog's **Other markers** section as a
   collapsed row ("not set" or its state) and works exactly like the Task: initials, dates, the same buttons, plus **Remove**. A breach can
   carry the Task and any number of other markers at once.
@@ -184,11 +190,14 @@ A marker is **live** while it is allocated or in progress; once completed it sto
 kept (and shown in the breach pane and the dialog) as the record of who did it and when.
 
 **The Live tasks banner.** A band across the top of the Overview, above both the national and the regional lists and as wide as the two together,
-shows every live marker as a tile: the marker, the initials, "Allocated" or "In progress", the region and town, and how long ago it was allocated
-and started. Work in progress comes first (the most recently started on the left), then the ones still waiting, the longest waiting first. A
-tile's left edge and badge are in the marker's colour. Click a tile to open that breach's pane. If there are more than fit, the row scrolls
-sideways (swipe on a phone) with a fade at the edge as the hint. With a region chosen, a switch **Only <region>** narrows the banner to that region
-(your choice is remembered on that browser). It refreshes with the page, every minute, and straight after any change. `GET /api/markers/live`
+shows the live tasks as **small tiles**, three lines each: the breach; the marker, the initials and the state ("Allocated", "Unallocated" or "In progress"); and
+the place (the town, or the region and town when the banner covers more than one region) with one time, "started 2h ago" or else "allocated 6d ago" ("marked", for a
+Task nobody has taken). The full wording is in a tile's tooltip. **Completed tasks are never listed** (the page also refuses to draw one if it were ever sent).
+**With a region chosen in the header, the banner shows every live task in that region by default** (the switch **Only <region>** is ticked; untick it to see every region;
+your choice is remembered on that browser). The tiles wrap onto as many rows as they need, so **every task is on show**: nothing scrolls sideways and nothing is hidden
+(on a phone they are a single column in the page). Work in progress comes first (the most recently started first), then the Tasks nobody has taken yet (dashed edge, no
+initials), then the ones still waiting, the longest waiting first. A tile's left edge and badge are in the marker's colour. Click a tile to open that breach's pane. It
+refreshes with the page, every minute, and straight after any change. `GET /api/markers/live` (optionally `?rocu=`; at most 100 tiles, with the true total).
 (optionally `?rocu=`; at most 100 tiles, with the true total).
 
 **Task review (past and present).** The **Review all tasks** button in the banner opens a pop-up with every task and marker ever put on a breach, live
@@ -197,7 +206,7 @@ breach (with gang and sector), marker, who, status (Waiting, In progress, Comple
 completion; for a live one, how long so far). **Select a row** (or press Enter on its chevron) and it opens out in place with the place, the full dates, who it was allocated
 to and by whom, how long it waited before starting, how long it was worked on, who last changed it, and two buttons: **Open breach details** (the pane opens over the pop-up) and
 **Flag or allocate** (the dialog opens over it; the table refreshes behind it when you change something, and rows stay open). Above the table, count chips
-(All, Live, Waiting, In progress, Completed) filter it and show the numbers, a line gives the average time to start and to finish across the finished tasks, a search box
+(All, Live, Unallocated, Waiting, In progress, Completed) filter it and show the numbers, a line gives the average time to start and to finish across the finished tasks, a search box
 finds breaches, gangs, sectors, initials, marker names and the person who set them (every word must match), and a Marker menu narrows it to the Task or one custom marker.
 Click a column heading to sort (again to reverse; a date that has not happened yet always sorts last); the default puts what needs attention first: in progress, then
 waiting (longest first), then finished (latest first). Fifty rows load at a time, with a button for more. A breach that has left the feed keeps its history (listed under All UK)
@@ -225,8 +234,8 @@ activity log (*Flagged a false positive*, *Undid a false-positive flag*, *Alloca
 breach*, *Updated a marker*, *Removed a marker*, *Created / Changed / Deleted a marker type*). Without a database the buttons are hidden.
 API: `GET /api/marker-types`; admin `POST /api/admin/marker-types` `{name, colour}` and `PATCH` / `DELETE /api/admin/marker-types/<id>`
 (`{name, colour, active}`); `PUT /api/victims/markers` `{title, type_id?, initials, allocated_at?}` (no `type_id` means the Task; an existing live one is
-taken over); `PATCH` `/api/victims/markers/<id>` `{initials?, allocated_at?, started_at?, completed_at?}` (an ISO time, `"now"`, or `null`
-for the last two) and `DELETE` the same. The older `/api/victims/alloc` PUT and DELETE still work and act on the Task.
+taken over; `"unallocated": true` instead of initials marks a Task nobody has taken, 409 if a live one is already there); `PATCH` `/api/victims/markers/<id>` `{initials?, allocated_at?, started_at?, completed_at?}` (an ISO time, `"now"`, or `null`
+for the last two; `"initials": ""` unallocates a Task that has not started) and `DELETE` the same. The older `/api/victims/alloc` PUT and DELETE still work and act on the Task.
 
 *Upgrading:* the first start with markers creates the Task and, once (recorded in `app_settings` as `markers_migrated`), turns every existing
 allocation into a Task marker in the *Allocated* state, with its initials, who set it and its date unchanged. The old `victim_alloc` table is left

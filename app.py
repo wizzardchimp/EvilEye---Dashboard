@@ -138,9 +138,9 @@ def load_marks():
         global MARKER_TYPES, MARKERS, ALLOC
         types = {r["id"]: r for r in db.many("select id, name, colour, builtin, active from marker_types")}
         markers, alloc = {}, {}
-        for r in db.many("select id, key, victim, type_id, initials, allocated_by, allocated_at, started_at, completed_at, updated_by, updated_at from victim_markers order by id"):
+        for r in db.many("select id, key, victim, type_id, initials, allocated_by, allocated_at, started_at, completed_at, updated_by, updated_at, marked_at from victim_markers order by id"):
             markers.setdefault(r["key"], []).append(r)
-            if types.get(r["type_id"], {}).get("builtin") and not r["completed_at"]:
+            if types.get(r["type_id"], {}).get("builtin") and not r["completed_at"] and r["initials"]:         # ALLOC: a live Task that somebody has
                 alloc[r["key"]] = {"initials": r["initials"], "allocated_by": r["allocated_by"], "allocated_at": r["allocated_at"]}
         MARKER_TYPES, MARKERS, ALLOC = types, markers, alloc
     except Exception as e:
@@ -1703,7 +1703,14 @@ def _marker_view(m):
     iso = lambda x: x.isoformat() if x else None
     return {"id": m["id"], "type_id": m["type_id"], "name": t.get("name", "?"), "colour": t.get("colour", "#94a2b7"), "builtin": bool(t.get("builtin")),
             "initials": m["initials"], "by": m["allocated_by"], "allocated_at": iso(m["allocated_at"]), "started_at": iso(m["started_at"]),
-            "completed_at": iso(m["completed_at"]), "status": "completed" if m["completed_at"] else "started" if m["started_at"] else "allocated"}
+            "completed_at": iso(m["completed_at"]), "marked_at": iso(m.get("marked_at") or m["allocated_at"]),
+            "status": "completed" if m["completed_at"] else "started" if m["started_at"] else "allocated" if m["initials"] else "unallocated"}
+
+
+def _live_task(key):
+    """The Task that is live on a breach (allocated, started or still unallocated), if any."""
+    bt = _builtin_type()
+    return next((m for m in MARKERS.get(key, []) if bt and m["type_id"] == bt["id"] and not m["completed_at"]), None)
 
 
 def _live_markers(key):
@@ -1711,7 +1718,12 @@ def _live_markers(key):
 
 
 def _can_edit_marker(m, u):
-    return u["role"] == "admin" or u["username"] == m["allocated_by"] or (u.get("initials") or "") == m["initials"]
+    return u["role"] == "admin" or u["username"] == m["allocated_by"] or bool(m["initials"] and (u.get("initials") or "") == m["initials"])
+
+
+def _who(m):
+    """Who may change a marker, in words (an unallocated Task has no initials, only whoever marked it)."""
+    return (f'{m["initials"]} ({m["allocated_by"]})' if m["initials"] else f'{m["allocated_by"]} (who marked it)')
 
 
 def _when(raw, now):
@@ -1722,21 +1734,27 @@ def _when(raw, now):
     return d if d and d <= now + timedelta(hours=1) else None
 
 
-def _marker_put(v, mt, initials, u, allocated_at=None):
-    """Put a marker on a breach, or take over the one that is there. A completed marker starts a fresh cycle. Returns (id, previous initials)."""
+def _marker_put(v, mt, initials, u, allocated_at=None, unallocated=False):
+    """Put a marker on a breach, or take over the one that is there. A completed marker starts a fresh cycle. initials '' with unallocated=True
+    marks a Task nobody has taken yet; allocating over one of those sets the date it was allocated. Returns (id, previous initials)."""
     prev = next((m for m in MARKERS.get(v["key"], []) if m["type_id"] == mt["id"]), None)
+    when = allocated_at or datetime.now(timezone.utc)
     if prev and prev["completed_at"]:
-        db.run("update victim_markers set initials=%s, allocated_by=%s, allocated_at=coalesce(%s, now()), started_at=null, completed_at=null, updated_by=%s, updated_at=now() where id=%s",
-               (initials, u["username"], allocated_at, u["username"], prev["id"]))
+        db.run("update victim_markers set initials=%s, allocated_by=%s, allocated_at=%s, marked_at=%s, started_at=null, completed_at=null, updated_by=%s, updated_at=now() where id=%s",
+               (initials, u["username"], when, when, u["username"], prev["id"]))
         mid, old = prev["id"], None
+    elif prev and not prev["initials"] and initials:        # somebody takes an unallocated Task: this is when it was allocated
+        db.run("update victim_markers set initials=%s, allocated_by=%s, allocated_at=%s, marked_at=least(coalesce(marked_at, %s), %s), updated_by=%s, updated_at=now() where id=%s",
+               (initials, u["username"], when, when, when, u["username"], prev["id"]))
+        mid, old = prev["id"], ""
     elif prev:
         db.run("update victim_markers set initials=%s, allocated_by=%s, updated_by=%s, updated_at=now() where id=%s", (initials, u["username"], u["username"], prev["id"]))
         mid, old = prev["id"], prev["initials"]
     else:
         # an upsert: two people allocating the same breach at the same instant both get an answer (the later one takes over)
-        mid, old = db.run("""insert into victim_markers (key, victim, type_id, initials, allocated_by, allocated_at, updated_by) values (%s,%s,%s,%s,%s,coalesce(%s, now()),%s)
+        mid, old = db.run("""insert into victim_markers (key, victim, type_id, initials, allocated_by, allocated_at, marked_at, updated_by) values (%s,%s,%s,%s,%s,%s,%s,%s)
                              on conflict (key, type_id) do update set initials=excluded.initials, allocated_by=excluded.allocated_by, updated_by=excluded.updated_by, updated_at=now()
-                             returning id""", (v["key"], v["post_title"], mt["id"], initials, u["username"], allocated_at, u["username"]))["id"], None
+                             returning id""", (v["key"], v["post_title"], mt["id"], initials, u["username"], when, when, u["username"]))["id"], None
     return mid, old
 
 
@@ -1841,10 +1859,18 @@ def victim_marker_set():
     mt = _builtin_type() if tid is None else MARKER_TYPES.get(tid) if isinstance(tid, int) and not isinstance(tid, bool) else None
     if not mt:
         return jsonify(error="Unknown marker."), 404
-    if not INITIALS_RE.match(initials):
+    unalloc = b.get("unallocated") is True
+    if unalloc:
+        if not mt["builtin"]:
+            return jsonify(error="Only the Task can be left unallocated."), 400
+        if initials:
+            return jsonify(error="Either give initials or leave it unallocated, not both."), 400
+    elif not INITIALS_RE.match(initials):
         return jsonify(error="Initials must be 2 to 4 letters."), 400
     u = current_user()
     existing = next((m for m in MARKERS.get(v["key"], []) if m["type_id"] == mt["id"]), None)
+    if unalloc and existing and not existing["completed_at"]:
+        return jsonify(error="This breach already has a live Task."), 409
     if not mt["active"] and not (existing and not existing["completed_at"]):
         return jsonify(error=f'The marker "{mt["name"]}" has been retired and cannot be used any more.'), 400
     at = None
@@ -1852,12 +1878,14 @@ def victim_marker_set():
         at = _when(b["allocated_at"], datetime.now(timezone.utc))
         if not at:
             return jsonify(error="The allocated date is not a valid date and time (and cannot be in the future)."), 400
-    mid, old = _marker_put(v, mt, initials, u, at)
-    if b.get("remember") or not u.get("initials"):
+    mid, old = _marker_put(v, mt, initials, u, at, unalloc)
+    if not unalloc and (b.get("remember") or not u.get("initials")):
         db.run("update users set initials=%s where id=%s", (initials, u["id"]))
     _marks_changed()
-    took = f" (took over from {old})" if old and old != initials else ""
-    if mt["builtin"]:                                  # the Task marker keeps the older log names
+    took = f" (took over from {old})" if old and old != initials else " (was unallocated)" if old == "" and initials else ""
+    if unalloc:
+        log("task_unallocated", f'{v["post_title"]} marked as a Task, unallocated')
+    elif mt["builtin"]:                                  # the Task marker keeps the older log names
         log("victim_alloc", f'{v["post_title"]} -> {initials}{took}')
     else:
         log("marker_set", f'{mt["name"]}: {v["post_title"]} -> {initials}{took}')
@@ -1877,14 +1905,19 @@ def victim_marker_update(mid):
         return jsonify(error="No such marker."), 404
     u = current_user()
     if not _can_edit_marker(m, u):
-        return jsonify(error=f'Only {m["initials"]} ({m["allocated_by"]}) or an admin can change this.'), 403
+        return jsonify(error=f'Only {_who(m)} or an admin can change this.'), 403
     b = request.get_json(silent=True) or {}
     now = datetime.now(timezone.utc)
     new = {k: m[k] for k in ("initials", "allocated_at", "started_at", "completed_at")}
+    builtin = bool((MARKER_TYPES.get(m["type_id"]) or {}).get("builtin"))
+    was_unalloc = not m["initials"]
     changes = []
     if "initials" in b:
         ini = (b["initials"] or "").strip().upper() if isinstance(b["initials"], str) else ""
-        if not INITIALS_RE.match(ini):
+        if ini == "" and builtin and isinstance(b["initials"], str):          # take the initials off a Task that has not started: it stays, unallocated
+            if m["started_at"] or m["completed_at"]:
+                return jsonify(error="Only a task that has not started can be unallocated."), 400
+        elif not INITIALS_RE.match(ini):
             return jsonify(error="Initials must be 2 to 4 letters."), 400
         new["initials"] = ini
     for field, label in MARKER_FIELDS:
@@ -1901,19 +1934,26 @@ def victim_marker_update(mid):
             new[field] = d
     if not any(k in b for k in ("initials", "allocated_at", "started_at", "completed_at")):
         return jsonify(error="Nothing to change."), 400
+    if not new["initials"] and (new["started_at"] or new["completed_at"] or "allocated_at" in b):
+        return jsonify(error="Put someone's initials on it first: an unallocated task cannot be started, completed or given an allocated date."), 400
+    marked = m.get("marked_at") or m["allocated_at"]
+    if new["initials"] and was_unalloc and "allocated_at" not in b:       # allocated by editing: it is allocated now
+        new["allocated_at"] = now
+    elif not new["initials"] and m["initials"]:                          # unallocated again: the date goes back to when it was first marked
+        new["allocated_at"] = marked
     if new["started_at"] and new["started_at"] < new["allocated_at"]:
         return jsonify(error="It cannot be started before it was allocated."), 400
     if new["completed_at"] and new["completed_at"] < new["allocated_at"]:
         return jsonify(error="It cannot be completed before it was allocated."), 400
     if new["completed_at"] and new["started_at"] and new["completed_at"] < new["started_at"]:
         return jsonify(error="It cannot be completed before it was started."), 400
-    db.run("update victim_markers set initials=%s, allocated_at=%s, started_at=%s, completed_at=%s, updated_by=%s, updated_at=now() where id=%s",
-           (new["initials"], new["allocated_at"], new["started_at"], new["completed_at"], u["username"], mid))
+    db.run("update victim_markers set initials=%s, allocated_by=%s, allocated_at=%s, started_at=%s, completed_at=%s, marked_at=least(coalesce(marked_at, %s), %s), updated_by=%s, updated_at=now() where id=%s",
+           (new["initials"], u["username"] if ((not new["initials"] and m["initials"]) or (new["initials"] and was_unalloc)) else m["allocated_by"], new["allocated_at"], new["started_at"], new["completed_at"], marked, new["allocated_at"], u["username"], mid))
     for field, label in MARKER_FIELDS:
         if new[field] != m[field]:
             changes.append(f"{label} cleared" if new[field] is None else f"{label} {new[field].strftime('%d %b %Y %H:%M')}")
     if new["initials"] != m["initials"]:
-        changes.append(f"initials {m['initials']} → {new['initials']}")
+        changes.append(f"initials {m['initials'] or '(none)'} → {new['initials'] or '(none)'}")
     _marks_changed()
     mt = MARKER_TYPES.get(m["type_id"]) or {"name": "?", "builtin": False}
     log("marker_update", f'{mt["name"]}: {m["victim"]}: ' + ", ".join(changes) if changes else f'{mt["name"]}: {m["victim"]}: no change')
@@ -1929,11 +1969,12 @@ def victim_marker_remove(mid):
         return jsonify(error="No such marker."), 404
     u = current_user()
     if not _can_edit_marker(m, u):
-        return jsonify(error=f'Only {m["initials"]} ({m["allocated_by"]}) or an admin can release this.'), 403
+        return jsonify(error=f'Only {_who(m)} or an admin can release this.'), 403
     db.run("delete from victim_markers where id=%s", (mid,))
     _marks_changed()
     mt = MARKER_TYPES.get(m["type_id"]) or {"name": "?", "builtin": False}
-    log("victim_alloc_clear" if mt["builtin"] else "marker_clear", f'{m["victim"]} (was {m["initials"]})' if mt["builtin"] else f'{mt["name"]}: {m["victim"]} (was {m["initials"]})')
+    was = m["initials"] or "unallocated"
+    log("victim_alloc_clear" if mt["builtin"] else "marker_clear", f'{m["victim"]} (was {was})' if mt["builtin"] else f'{mt["name"]}: {m["victim"]} (was {was})')
     return jsonify(ok=True)
 
 
@@ -1953,10 +1994,11 @@ def api_markers_live():
                 continue
             items.append({**_marker_view(m), "title": v["post_title"] if v else m["victim"], "group": (v or {}).get("group", ""), "sector": (v or {}).get("activity", ""),
                           "rocu": rocu, "town": (v or {}).get("town", "")})
-    # in progress first (most recently started on top), then waiting ones, longest waiting first
+    # in progress first (most recently started on top), then the Tasks nobody has taken, then waiting ones, longest waiting first
     started = sorted((x for x in items if x["started_at"]), key=lambda x: x["started_at"], reverse=True)
-    waiting = sorted((x for x in items if not x["started_at"]), key=lambda x: x["allocated_at"])
-    items = started + waiting
+    nobody = sorted((x for x in items if x["status"] == "unallocated"), key=lambda x: x["allocated_at"])
+    waiting = sorted((x for x in items if x["status"] == "allocated"), key=lambda x: x["allocated_at"])
+    items = started + nobody + waiting
     return jsonify(total=len(items), items=items[:100], ever=sum(len(ms) for ms in MARKERS.values()))
 
 
@@ -1991,19 +2033,22 @@ def api_markers_history():
             a, s, c = m["allocated_at"], m["started_at"], m["completed_at"]
             secs = lambda later, earlier: int((later - earlier).total_seconds()) if later and earlier else None
             x["to_start_s"], x["working_s"], x["to_finish_s"] = secs(s, a), secs(c, s), secs(c, a)
+            x["to_allocate_s"] = secs(a, m.get("marked_at")) if m["initials"] and secs(a, m.get("marked_at")) else None       # how long a Task waited for somebody to take it
             x["took_s"] = x["to_finish_s"] if c else secs(now, a)          # a finished task: allocation to completion; a live one: how long so far
             rows.append(x)
-    counts = {"all": len(rows), "live": sum(1 for x in rows if x["status"] != "completed"), "waiting": sum(1 for x in rows if x["status"] == "allocated"),
-              "started": sum(1 for x in rows if x["status"] == "started"), "completed": sum(1 for x in rows if x["status"] == "completed")}
+    counts = {"all": len(rows), "live": sum(1 for x in rows if x["status"] != "completed"), "unallocated": sum(1 for x in rows if x["status"] == "unallocated"),
+              "waiting": sum(1 for x in rows if x["status"] == "allocated"), "started": sum(1 for x in rows if x["status"] == "started"),
+              "completed": sum(1 for x in rows if x["status"] == "completed")}
     mean = lambda xs: int(sum(xs) / len(xs)) if xs else None
     avg = {"to_start_s": mean([x["to_start_s"] for x in rows if x["to_start_s"] is not None and x["status"] == "completed"]),
            "to_finish_s": mean([x["to_finish_s"] for x in rows if x["to_finish_s"] is not None])}
     if status == "live":
         rows = [x for x in rows if x["status"] != "completed"]
-    elif status in ("waiting", "started", "completed"):
+    elif status in ("unallocated", "waiting", "started", "completed"):
         rows = [x for x in rows if x["status"] == {"waiting": "allocated"}.get(status, status)]
-    if sort == "status":                  # what needs attention first: in progress (latest start first), waiting (longest first), then finished (latest first)
+    if sort == "status":                  # what needs attention first: in progress (latest start first), nobody yet, waiting (longest first), then finished (latest first)
         rows = (sorted((x for x in rows if x["status"] == "started"), key=lambda x: _epoch(x["started_at"]), reverse=True)
+                + sorted((x for x in rows if x["status"] == "unallocated"), key=lambda x: _epoch(x["allocated_at"]))
                 + sorted((x for x in rows if x["status"] == "allocated"), key=lambda x: _epoch(x["allocated_at"]))
                 + sorted((x for x in rows if x["status"] == "completed"), key=lambda x: _epoch(x["completed_at"]), reverse=True))
         if request.args.get("dir") == "desc":
@@ -2044,15 +2089,15 @@ def victim_alloc_clear():
     if LEGACY:
         return jsonify(error="Database not connected."), 503
     v = _find_victim(request.args.get("title"))
-    a = ALLOC.get(v["key"]) if v else None
-    if not a:
+    m = _live_task(v["key"]) if v else None
+    if not m:
         return jsonify(error="That victim is not allocated."), 404
     u = current_user()
-    if u["role"] != "admin" and u["username"] != a["allocated_by"] and (u.get("initials") or "") != a["initials"]:
-        return jsonify(error=f'Only {a["initials"]} ({a["allocated_by"]}) or an admin can release this.'), 403
-    db.run("delete from victim_markers where key=%s and type_id=%s", (v["key"], _builtin_type()["id"]))
+    if not _can_edit_marker(m, u):
+        return jsonify(error=f'Only {_who(m)} or an admin can release this.'), 403
+    db.run("delete from victim_markers where id=%s", (m["id"],))
     _marks_changed()
-    log("victim_alloc_clear", f'{v["post_title"]} (was {a["initials"]})')
+    log("victim_alloc_clear", f'{v["post_title"]} (was {m["initials"] or "unallocated"})')
     return jsonify(ok=True)
 
 
@@ -2390,7 +2435,7 @@ def api_victims_csv():
                      v.get("region_source", ""), safe(v["group"]), v["activity"], v.get("seen", ""), safe(v["website"]),
                      (v["flag"]["kind"].replace("_", " ") + " by " + v["flag"]["by"]) if v.get("flag") and v["flag"]["applied"] else "",
                      (ALLOC.get(v["key"]) or {}).get("initials", ""),
-                     safe("; ".join(f'{(MARKER_TYPES.get(m["type_id"]) or {}).get("name", "?")}: {m["initials"]} ({"in progress" if m["started_at"] else "allocated"})'
+                     safe("; ".join(f'{(MARKER_TYPES.get(m["type_id"]) or {}).get("name", "?")}: ' + (f'{m["initials"]} ({"in progress" if m["started_at"] else "allocated"})' if m["initials"] else "unallocated")
                                     for m in _live_markers(v["key"])))])
     log("export", f"victims csv ({len(items)} rows" + (f", {_region()}" if _region() else "") + ")")
     return Response(out.getvalue(), mimetype="text/csv",

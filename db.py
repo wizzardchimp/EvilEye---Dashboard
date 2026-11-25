@@ -123,9 +123,13 @@ create table if not exists victim_markers (
     completed_at  timestamptz,
     updated_by    text not null default '',
     updated_at    timestamptz not null default now(),
+    marked_at     timestamptz,
     unique (key, type_id)
 );
 create index if not exists victim_markers_type on victim_markers (type_id);
+-- a Task can be marked on a breach before anyone has taken it: initials '' = unallocated. marked_at is when it was first marked (allocated_at is then
+-- a placeholder equal to it, and becomes the date someone took it).
+alter table victim_markers add column if not exists marked_at timestamptz;
 -- allocations made before markers existed become Task markers, once (victim_alloc is left in place, no longer read)
 do $$ begin
   if not exists (select 1 from app_settings where key = 'markers_migrated') then
@@ -135,6 +139,7 @@ do $$ begin
     insert into app_settings (key, value) values ('markers_migrated', now()::text);
   end if;
 end $$;
+update victim_markers set marked_at = allocated_at where marked_at is null;
 
 -- email alerts: an address per person (set by an admin; optional), and a switch for each person to stop their own
 alter table users add column if not exists email text;
