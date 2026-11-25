@@ -7,7 +7,7 @@
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <script src="/static/theme-init.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=66">
+  <link rel="stylesheet" href="/static/style.css?v=73">
 </head>
 <body>
   <header class="topbar">
@@ -246,12 +246,29 @@
         <div id="u-msg" class="callout" role="status" hidden></div>
         <p class="hint small" style="margin-bottom:0">New users, and anyone whose password you reset, must choose their own password the first time they sign in.</p>
       </div>
+      <div class="card groups-card" id="groups-card">
+        <div class="card-head"><h3>Groups</h3><span class="meta">Name a group, then put people in it. Someone can be in more than one.</span></div>
+        <form id="gform" class="gform" autocomplete="off">
+          <label class="field">New group name<input id="g-name" class="search" required maxlength="40" autocomplete="off" placeholder="e.g. Midlands team"></label>
+          <button class="btn" type="submit">Create group</button>
+        </form>
+        <div id="g-msg" class="callout err" role="alert" hidden></div>
+        <div id="g-list" class="g-list"></div>
+      </div>
+      <div class="toolbar utools">
+        <label class="field inline">Show<select id="u-fgroup" class="search" aria-label="Show people in a group"><option value="">Everyone</option></select></label>
+        <label class="field inline">Sort by<select id="u-sort" class="search" aria-label="Sort people by">
+          <option value="name">Username (A to Z)</option><option value="active">Last active (newest first)</option><option value="active-old">Last active (longest ago first)</option>
+          <option value="login">Last signed in (newest first)</option><option value="login-old">Last signed in (longest ago first)</option></select></label>
+        <span id="u-count" class="count" aria-live="polite"></span>
+      </div>
       <div class="table-wrap">
         <table class="table users">
-          <thead><tr><th>User</th><th>Role</th><th>Region</th><th>Status</th><th>Last sign-in</th><th>Activity</th><th class="r">Actions</th></tr></thead>
+          <thead><tr><th>User</th><th>Role</th><th>Groups</th><th>Region</th><th>Status</th><th>Last signed in</th><th>Last active</th><th class="r">Actions</th></tr></thead>
           <tbody id="user-rows"></tbody>
         </table>
       </div>
+      <p class="hint small utip"><strong>Last signed in</strong> is when they last entered their password. <strong>Last active</strong> is the last thing they did here (opening the dashboard, changing page, searching&hellip;). A browser stays signed in between visits, so someone can be active for weeks without signing in again. A green dot means active in the last 5 minutes.</p>
     </section>
 
     <section id="tab-activity" class="panel">
@@ -377,6 +394,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i><i id="ob-dot3"></i><i id="ob-dot4"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=64"></script>
+  <script src="/static/app.js?v=68"></script>
 </body>
 </html>

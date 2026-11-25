@@ -70,6 +70,25 @@ create table if not exists victim_alloc (
 );
 alter table users add column if not exists initials text not null default '';
 alter table users add column if not exists theme text not null default '';
+
+-- groups: named sets of people (admin-made). A person can be in several; deleting a group or a user removes the links, never the other side.
+create table if not exists user_groups (
+    id          serial primary key,
+    name        text not null,
+    created_at  timestamptz not null default now(),
+    created_by  text not null default ''
+);
+create unique index if not exists user_groups_name_lower on user_groups (lower(name));
+create table if not exists user_group_members (
+    user_id   integer not null references users (id) on delete cascade,
+    group_id  integer not null references user_groups (id) on delete cascade,
+    added_at  timestamptz not null default now(),
+    added_by  text not null default '',
+    primary key (user_id, group_id)
+);
+create index if not exists user_group_members_group on user_group_members (group_id);
+-- "last active" and the event counts read the newest / all rows for one person: keep that quick as the log grows
+create index if not exists activity_user_id_ts on activity (user_id, ts desc);
 """
 
 
@@ -94,6 +113,17 @@ def one(sql, params=()):
 def many(sql, params=()):
     with connect() as c:
         return c.execute(sql, params).fetchall()
+
+
+Duplicate = psycopg.errors.UniqueViolation
+
+
+def txn(steps):
+    """Run several (sql, params) statements as one all-or-nothing transaction."""
+    with connect() as c:
+        with c.transaction():
+            for sql, params in steps:
+                c.execute(sql, params)
 
 
 def run(sql, params=()):

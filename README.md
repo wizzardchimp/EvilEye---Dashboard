@@ -181,6 +181,29 @@ out of the selected region, so they can be reviewed or undone). Flags and alloca
 Accounts live in PostgreSQL (`DATABASE_URL`). The first admin is created from `EVILEYE_ADMIN_USER` (default `admin`) and
 `EVILEYE_PASSWORD` when the users table is empty. After that, admins add, disable, delete and reset users on the
 **Users** tab, and read the log on the **Activity** tab (filter by user and event, export CSV).
+
+**The Users tab** lists each person with their role, groups, region and status, and two separate times:
+- **Last signed in**: when they last entered their password (how long ago, with the exact date and time underneath, or "Never signed in").
+- **Last active**: the last thing they did on the dashboard (any logged event: opening it, changing page, searching...), with a green dot if
+  that was in the last 5 minutes and a link to their event list. A browser stays signed in between visits, so someone can be active for weeks
+  without signing in again; a failed sign-in does not count as being active. Hovering gives the exact time.
+- **Show** filters the table to one group (or "People in no group"), and **Sort by** orders it by username, last active or last signed in (either
+  way round; people who never have go with the longest ago).
+
+**Groups** (admins only) are named sets of people, kept in their own table (`user_groups`, with `user_group_members` linking them to users):
+- Create a group by typing a name (1 to 40 characters; extra spaces are tidied; no two groups may share a name, whatever the capitals; it needs
+  a letter or number and may not contain control or invisible characters; up to 200 groups).
+- A person can be in **several** groups. Put them in from the **+ Add group** menu on their row, take them out with the x on a group chip, or
+  use a group card's **Members** button for a tick-list of everyone ("Tick everyone" / "Untick everyone"). **Rename** keeps the members;
+  **Delete** asks first and only takes people out of the group, it never deletes them. Deleting a person removes them from their groups.
+  Clicking a group's name in its card filters the table to its members.
+- Every change is in the activity log (`group_create`, `group_rename`, `group_delete`, `group_members` with who was added and removed).
+- Each person can see their own groups in their account dialog (the person icon in the header). Groups do not change what anyone can see or
+  do yet; they are labels to build on.
+- API (admin only): `GET /api/admin/groups`; `POST /api/admin/groups` `{name}`; `PATCH` / `DELETE /api/admin/groups/<id>`;
+  `PUT /api/admin/groups/<id>/members` `{user_ids: [...]}` (replace the member list); `PUT` / `DELETE /api/admin/groups/<id>/members/<user id>`
+  (add / remove one person, safe to repeat). `GET /api/admin/users` now also returns each person's `group_ids` and the groups.
+
 Logged: logins, failed logins, logouts, page opens, refreshes, tab views (including pages reached by a shared link), searches,
 filters, region changes, victim details opened, **screen wake on / off / failed** (with the browser's reason), **outbound links
 clicked** (where it was clicked and the destination host and path, query strings are not kept), **leak-site addresses copied**

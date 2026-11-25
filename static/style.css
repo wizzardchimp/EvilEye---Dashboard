@@ -801,3 +801,54 @@ select.search { flex: 0 1 210px; }
 .mapbtn:hover { border-color: var(--link); text-decoration: none; }
 .mapbtn svg { display: block; width: 14px; height: 14px; }
 @media (max-width: 640px) { .mapbtn { padding: 5px 13px 5px 10px; } }          /* a bigger target for a thumb */
+
+/* ---------- users: last signed in / last active, and groups ---------- */
+.users .live-dot { display: inline-block; margin-right: 7px; vertical-align: 1px; }
+.users td.ugrp-cell { white-space: normal; min-width: 150px; max-width: 230px; }
+.users select.u-gadd { min-width: 0; width: 100%; max-width: 200px; }
+.gchips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px; }
+.gchip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 3px 2px 9px; font-size: calc(12px * var(--fs)); line-height: 1.5; overflow-wrap: anywhere; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text); }
+.gchip button { flex: none; width: 18px; height: 18px; line-height: 1; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; font-size: calc(14px * var(--fs)); padding: 0; }
+.gchip button:hover { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+.groups-card { margin-bottom: 18px; }
+.gform { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.gform .field { flex: 1 1 260px; max-width: 420px; min-width: 0; }
+.gform .search { width: 100%; flex: none; min-width: 0; height: 38px; }
+.gform .btn { height: 38px; padding: 0 22px; }
+#g-msg { margin: 12px 0 0; }
+.g-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); gap: 12px; margin-top: 16px; }
+.ugrp { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
+.ugrp-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.ugrp-name { background: none; border: 0; padding: 0; font: inherit; font-weight: 650; font-size: calc(14.5px * var(--fs)); color: var(--text); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.ugrp-name:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.ugrp-h .meta { flex: none; color: var(--text-2); }          /* the muted grey is 4.4:1 on this card in the light theme: just under the 4.5:1 minimum */
+.ugrp-m { font-size: calc(13px * var(--fs)); color: var(--text-2); overflow-wrap: anywhere; min-height: 1.4em; }
+.ugrp-m.meta { color: var(--muted); }
+.ugrp-a { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.ugrp-a .more { padding: 4px 11px; font-size: calc(12.5px * var(--fs)); }
+.ugrp-a .more.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 38%, transparent); }
+.utools { align-items: center; gap: 8px 18px; }
+.utools .field { flex-direction: row; align-items: center; gap: 8px; font-size: calc(13px * var(--fs)); }
+.utools .field .search { min-width: 0; flex: 0 1 auto; height: 34px; padding: 0 10px; }
+.utools .count { margin: 0 0 0 auto; }
+.utip { margin: 12px 2px 0; max-width: 880px; }
+.mem-list { border: 1px solid var(--border-strong); border-radius: 10px; margin: 0 0 10px; padding: 4px; max-height: min(52vh, 420px); overflow-y: auto; min-width: 0; }
+.mem { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 7px; cursor: pointer; }
+.mem:hover { background: var(--hover); }
+.mem input { flex: none; width: 18px; height: 18px; accent-color: var(--accent); }
+.mem-n { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.mem-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 14px; font-size: calc(13px * var(--fs)); }
+.mem-tools .meta { margin-left: auto; }
+.mem-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .users td.ugrp-cell { grid-column: 1 / -1; max-width: none; }
+  /* a person's card: name, then Role | Status, Groups, Region, Last signed in | Last active, then the buttons */
+  .users td.who-cell { order: 0; } .users td[data-label="Role"] { order: 1; } .users td[data-label="Status"] { order: 2; } .users td.ugrp-cell { order: 3; }
+  .users td[data-label="Region"] { order: 4; grid-column: 1 / -1; } .users td[data-label="Last signed in"] { order: 5; } .users td[data-label="Last active"] { order: 6; } .users td.actions { order: 7; }
+  .users select.u-gadd { max-width: none; }
+  .ugrp-a .more { padding: 7px 14px; }          /* buttons a thumb can hit */
+  .gchip { padding: 3px 4px 3px 11px; } .gchip button { width: 28px; height: 28px; font-size: calc(15px * var(--fs)); }          /* a thumb-sized x */
+  .utools .count { margin-left: 0; flex: 1 0 100%; }
+  .utools .field { flex: 1 1 100%; min-width: 0; } .utools .field .search { flex: 1 1 0; width: 100%; min-width: 0; }          /* a menu will not shrink below its longest option unless told its width is a percentage */
+  .gform .btn { flex: 1 1 100%; }
+}

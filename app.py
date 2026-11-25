@@ -19,6 +19,7 @@ import secrets
 import socket
 import threading
 import time
+import unicodedata
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -937,7 +938,11 @@ def api_refresh():
 def api_me():
     u = current_user()
     p = _prev_visit()
-    return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY,
+    try:
+        groups = [] if LEGACY else _user_group_names(u["id"])
+    except Exception:
+        groups = []
+    return jsonify(username=u["username"], role=u["role"], region=u["region"], database=not LEGACY, groups=groups,
                    regions=geo.FILTER_REGIONS, initials=u.get("initials") or "", theme=u.get("theme") or "", prev_visit=p.isoformat() if p else None, onboarded=bool(u.get("onboarded_at")),
                    must_change=bool(u.get("must_change")))
 
@@ -1046,10 +1051,14 @@ def admin_users():
                       (select count(*) from activity a where a.user_id = u.id) as events,
                       (select max(a.ts) from activity a where a.user_id = u.id) as last_activity, u.must_change
                       from users u order by lower(u.username)""")
+    gids = defaultdict(list)
+    for m in db.many("select user_id, group_id from user_group_members order by group_id"):
+        gids[m["user_id"]].append(m["group_id"])
     return jsonify(users=[{**r, "created_at": r["created_at"].isoformat(),
                            "last_login": r["last_login"].isoformat() if r["last_login"] else None,
-                           "last_activity": r["last_activity"].isoformat() if r["last_activity"] else None} for r in rows],
-                   regions=geo.FILTER_REGIONS)
+                           "last_activity": r["last_activity"].isoformat() if r["last_activity"] else None,
+                           "group_ids": gids.get(r["id"], [])} for r in rows],
+                   groups=_groups_payload(), regions=geo.FILTER_REGIONS)
 
 
 @app.post("/api/admin/users")
@@ -1131,6 +1140,143 @@ def admin_user_delete(uid):
     db.run("delete from users where id=%s", (uid,))           # activity rows stay (username kept, user_id nulled)
     log("user_delete", row["username"])
     return jsonify(ok=True)
+
+
+# ---- admin: groups (named sets of people; someone can be in several)
+GROUP_NAME_MAX, GROUP_MAX = 40, 200
+
+
+def _group_name(raw):
+    """(tidy name, None) or (None, why not). 1 to 40 characters, runs of spaces collapsed, at least one letter or number,
+    and no control or invisible formatting characters (they could make a name look like something it is not)."""
+    if not isinstance(raw, str):
+        return None, "Give the group a name."
+    name = re.sub(r"\s+", " ", raw).strip()
+    if not name:
+        return None, "Give the group a name."
+    if len(name) > GROUP_NAME_MAX:
+        return None, f"A group name can be at most {GROUP_NAME_MAX} characters."
+    if any(unicodedata.category(ch) in ("Cc", "Cf") for ch in name) or not re.search(r"[^\W_]", name):
+        return None, "A group name needs at least one letter or number, and no hidden or control characters."
+    return name, None
+
+
+def _groups_payload():
+    mem = defaultdict(list)
+    for m in db.many("select m.group_id, m.user_id, u.username from user_group_members m join users u on u.id = m.user_id order by lower(u.username)"):
+        mem[m["group_id"]].append({"id": m["user_id"], "username": m["username"]})
+    return [{"id": g["id"], "name": g["name"], "created_at": g["created_at"].isoformat(), "created_by": g["created_by"],
+             "members": mem.get(g["id"], []), "count": len(mem.get(g["id"], []))}
+            for g in db.many("select id, name, created_at, created_by from user_groups order by lower(name), id")]
+
+
+def _user_group_names(uid):
+    return [r["name"] for r in db.many("select g.name from user_group_members m join user_groups g on g.id = m.group_id where m.user_id=%s order by lower(g.name)", (uid,))]
+
+
+@app.get("/api/admin/groups")
+@admin_required
+def admin_groups():
+    return jsonify(groups=_groups_payload())
+
+
+@app.post("/api/admin/groups")
+@admin_required
+def admin_group_create():
+    name, err = _group_name((request.get_json(silent=True) or {}).get("name"))
+    if err:
+        return jsonify(error=err), 400
+    if db.one("select count(*) as c from user_groups")["c"] >= GROUP_MAX:
+        return jsonify(error=f"That is the most groups there can be ({GROUP_MAX})."), 400
+    try:
+        row = db.run("insert into user_groups (name, created_by) values (%s,%s) returning id", (name, current_user()["username"]))
+    except db.Duplicate:
+        return jsonify(error="There is already a group with that name."), 409
+    log("group_create", name)
+    return jsonify(id=row["id"], name=name), 201
+
+
+@app.patch("/api/admin/groups/<int:gid>")
+@admin_required
+def admin_group_rename(gid):
+    old = db.one("select name from user_groups where id=%s", (gid,))
+    if not old:
+        return jsonify(error="No such group."), 404
+    name, err = _group_name((request.get_json(silent=True) or {}).get("name"))
+    if err:
+        return jsonify(error=err), 400
+    try:
+        db.run("update user_groups set name=%s where id=%s", (name, gid))
+    except db.Duplicate:
+        return jsonify(error="There is already a group with that name."), 409
+    if name != old["name"]:
+        log("group_rename", f"{old['name']} → {name}")
+    return jsonify(ok=True, name=name)
+
+
+@app.delete("/api/admin/groups/<int:gid>")
+@admin_required
+def admin_group_delete(gid):
+    g = db.one("select name, (select count(*) from user_group_members where group_id=%s) as n from user_groups where id=%s", (gid, gid))
+    if not g:
+        return jsonify(error="No such group."), 404
+    db.run("delete from user_groups where id=%s", (gid,))                  # the links go with it; the people stay
+    log("group_delete", f"{g['name']} ({g['n']} member{'' if g['n'] == 1 else 's'} taken out of it)")
+    return jsonify(ok=True)
+
+
+def _log_members(group, added, removed):
+    bits = [f"+{n}" for n in added] + [f"-{n}" for n in removed]
+    if bits:
+        log("group_members", f"{group}: {', '.join(bits)}")
+
+
+@app.put("/api/admin/groups/<int:gid>/members")
+@admin_required
+def admin_group_members_set(gid):
+    """Make the group's members exactly these people (the tick-list dialog)."""
+    g = db.one("select name from user_groups where id=%s", (gid,))
+    if not g:
+        return jsonify(error="No such group."), 404
+    ids = (request.get_json(silent=True) or {}).get("user_ids")
+    if not isinstance(ids, list) or len(ids) > 5000 or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids):
+        return jsonify(error="user_ids must be a list of user ids."), 400
+    want = set(ids)
+    users = {r["id"]: r["username"] for r in db.many("select id, username from users")}
+    if not want <= set(users):
+        return jsonify(error="One of those people no longer exists."), 400
+    have = {r["user_id"] for r in db.many("select user_id from user_group_members where group_id=%s", (gid,))}
+    me = current_user()["username"]
+    steps = [("delete from user_group_members where group_id=%s and not (user_id = any(%s))", (gid, list(want)))]
+    steps += [("insert into user_group_members (user_id, group_id, added_by) values (%s,%s,%s) on conflict do nothing", (uid, gid, me)) for uid in want - have]
+    db.txn(steps)
+    _log_members(g["name"], sorted(users[u] for u in want - have), sorted(users[u] for u in have - want))
+    return jsonify(ok=True, count=len(want))
+
+
+@app.put("/api/admin/groups/<int:gid>/members/<int:uid>")
+@admin_required
+def admin_group_member_add(gid, uid):
+    g, u = db.one("select name from user_groups where id=%s", (gid,)), db.one("select username from users where id=%s", (uid,))
+    if not g or not u:
+        return jsonify(error="No such group or person."), 404
+    row = db.run("insert into user_group_members (user_id, group_id, added_by) values (%s,%s,%s) on conflict do nothing returning user_id",
+                 (uid, gid, current_user()["username"]))
+    if row:
+        _log_members(g["name"], [u["username"]], [])
+    return jsonify(ok=True, changed=bool(row))
+
+
+@app.delete("/api/admin/groups/<int:gid>/members/<int:uid>")
+@admin_required
+def admin_group_member_remove(gid, uid):
+    g, u = db.one("select name from user_groups where id=%s", (gid,)), db.one("select username from users where id=%s", (uid,))
+    if not g or not u:
+        return jsonify(error="No such group or person."), 404
+    row = db.run("delete from user_group_members where user_id=%s and group_id=%s returning user_id", (uid, gid))
+    if row:
+        _log_members(g["name"], [], [u["username"]])
+    return jsonify(ok=True, changed=bool(row))
 
 
 def _activity_query():

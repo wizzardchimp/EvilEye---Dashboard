@@ -865,6 +865,7 @@ const EVENT_LABEL = {
   screen_wake_on: "Screen wake on", screen_wake_off: "Screen wake off", screen_wake_failed: "Screen wake failed",
   password_change: "Changed own password", password_change_failed: "Password change failed",
   user_create: "Created a user", user_update: "Updated a user", user_delete: "Deleted a user",
+  group_create: "Created a group", group_rename: "Renamed a group", group_delete: "Deleted a group", group_members: "Changed a group's members",
   placement_set: "Set a victim's region", placement_clear: "Cleared a manual region",
   victim_flag: "Flagged a false positive", victim_flag_clear: "Undid a false-positive flag", victim_alloc: "Allocated a victim", victim_alloc_clear: "Released a victim allocation",
   onboarding_done: "Finished the welcome tour", onboarding_skipped: "Skipped the welcome tour",
@@ -879,32 +880,149 @@ const genPassword = () => {
   return [...a].map((n) => chars[n % chars.length]).join("");
 };
 const ICONS = {"key": "<path d=\"M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4\"/>", "shield": "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/>", "ban": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"4.93\" y1=\"4.93\" x2=\"19.07\" y2=\"19.07\"/>", "ok": "<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\"/><polyline points=\"22 4 12 14.01 9 11.01\"/>", "trash": "<polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/>"};
-let userCache = [];
-async function loadUsers() {
+let userCache = [], groupCache = [];
+const uf = { group: "", sort: "name" };                   // the Users screen's view: which group to show, and the order
+const tsOf = (x) => (x ? new Date(x).getTime() : -1);       // never = older than everything
+const lastSignedIn = (u) => (u.last_login ? `<div>${esc(ago(u.last_login))}</div><div class="meta">${esc(fmtTime(u.last_login))}</div>` : '<span class="meta">Never signed in</span>');
+const lastActive = (u) => {
+  if (!u.last_activity) return '<span class="meta">No activity yet</span>';
+  const now = Date.now() - tsOf(u.last_activity) < 5 * 60000;
+  return `<div title="${esc(fmtTime(u.last_activity))}">${now ? '<span class="live-dot" role="img" aria-label="Active in the last 5 minutes" title="Active in the last 5 minutes"></span>' : ""}${esc(ago(u.last_activity))}</div>
+    <div class="meta"><button type="button" class="link" data-act="events" data-id="${u.id}" title="See ${esc(u.username)}'s activity">${u.events} event${u.events === 1 ? "" : "s"}</button></div>`;
+};
+function groupCell(u) {
+  if (!groupCache.length) return '<span class="meta">No groups yet</span>';
+  const mine = groupCache.filter((g) => u.group_ids.includes(g.id));
+  const free = groupCache.filter((g) => !u.group_ids.includes(g.id));
+  const chips = mine.map((g) => `<span class="gchip">${esc(g.name)}<button type="button" data-act="ungroup" data-id="${u.id}" data-g="${g.id}" title="Take ${esc(u.username)} out of ${esc(g.name)}" aria-label="Remove ${esc(u.username)} from ${esc(g.name)}">&times;</button></span>`).join("");
+  const add = free.length ? `<select class="search u-gadd" data-id="${u.id}" aria-label="Add ${esc(u.username)} to a group"><option value="">+ Add group</option>${free.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("")}</select>` : "";
+  return `${chips ? `<div class="gchips">${chips}</div>` : ""}${add}`;
+}
+function renderGroups() {
+  const list = $("#g-list");
+  list.innerHTML = groupCache.length ? groupCache.map((g) => {
+    const names = g.members.slice(0, 6).map((m) => esc(m.username)).join(", ") + (g.members.length > 6 ? ` and ${g.members.length - 6} more` : "");
+    return `<div class="ugrp" data-g="${g.id}">
+      <div class="ugrp-h"><button type="button" class="ugrp-name" data-act="gfilter" data-g="${g.id}" title="Show only the people in ${esc(g.name)}">${esc(g.name)}</button><span class="meta">${g.count} member${g.count === 1 ? "" : "s"}</span></div>
+      <div class="ugrp-m ${g.count ? "" : "meta"}">${g.count ? names : "Nobody yet"}</div>
+      <div class="ugrp-a"><button type="button" class="more" data-act="gmembers" data-g="${g.id}">Members</button><button type="button" class="more" data-act="grename" data-g="${g.id}">Rename</button><button type="button" class="more danger" data-act="gdelete" data-g="${g.id}" aria-label="Delete the group ${esc(g.name)}">Delete</button></div></div>`;
+  }).join("") : '<p class="hint" style="margin:0">No groups yet. Create one above, then put people in it.</p>';
+  const keep = uf.group;
+  $("#u-fgroup").innerHTML = '<option value="">Everyone</option><option value="none">People in no group</option>' + groupCache.map((g) => `<option value="${g.id}">${esc(g.name)} (${g.count})</option>`).join("");
+  if (keep && keep !== "none" && !groupCache.some((g) => String(g.id) === keep)) uf.group = "";
+  $("#u-fgroup").value = uf.group;
+}
+function renderUsers() {
   const body = $("#user-rows");
-  body.innerHTML = `<tr><td colspan="7">${sk(3)}</td></tr>`;
-  try {
-    const d = await api("/api/admin/users");
-    userCache = d.users;
-    const regionOpts = (sel) => '<option value="">All UK</option>' + d.regions.map((r) => `<option ${r === sel ? "selected" : ""}>${esc(r)}</option>`).join("");
-    if ($("#u-region").options.length <= 1) $("#u-region").innerHTML = regionOpts("");
-    body.innerHTML = d.users.map((u) => `
+  const regionOpts = (sel) => '<option value="">All UK</option>' + userRegions.map((r) => `<option ${r === sel ? "selected" : ""}>${esc(r)}</option>`).join("");
+  let rows = userCache.slice();
+  if (uf.group === "none") rows = rows.filter((u) => !u.group_ids.length);
+  else if (uf.group) rows = rows.filter((u) => u.group_ids.includes(+uf.group));
+  const key = { name: (u) => u.username.toLowerCase(), active: (u) => -tsOf(u.last_activity), "active-old": (u) => tsOf(u.last_activity), login: (u) => -tsOf(u.last_login), "login-old": (u) => tsOf(u.last_login) }[uf.sort];
+  rows.sort((x, y) => (key(x) < key(y) ? -1 : key(x) > key(y) ? 1 : x.username.toLowerCase() < y.username.toLowerCase() ? -1 : 1));
+  const g = uf.group && uf.group !== "none" ? groupCache.find((x) => String(x.id) === uf.group) : null;
+  $("#u-count").textContent = rows.length === userCache.length ? `${rows.length} ${rows.length === 1 ? "person" : "people"}` : `${rows.length} of ${userCache.length} ${userCache.length === 1 ? "person" : "people"}${g ? ` in ${g.name}` : uf.group === "none" ? " in no group" : ""}`;
+  body.innerHTML = rows.map((u) => `
       <tr data-id="${u.id}">
         <td class="who-cell"><div class="who"><span class="nm">${esc(u.username)}${u.username === ME.username ? ' <span class="badge src">you</span>' : ""}</span><span class="meta">created ${fmtDate(u.created_at)}${u.created_by ? ` by ${esc(u.created_by)}` : ""}</span></div></td>
         <td data-label="Role"><span class="badge ${u.role === "admin" ? "wm" : "uk"}">${esc(u.role)}</span></td>
+        <td data-label="Groups" class="ugrp-cell">${groupCell(u)}</td>
         <td data-label="Region"><select class="search u-reg" data-id="${u.id}" aria-label="Region for ${esc(u.username)}">${regionOpts(u.region)}</select></td>
         <td data-label="Status"><div class="st">${u.active ? '<span class="badge on">active</span>' : '<span class="badge off">disabled</span>'}${u.must_change ? '<span class="badge wm" title="They must choose their own password when they next sign in">must set password</span>' : ""}</div></td>
-        <td data-label="Last sign-in">${u.last_login ? fmtTime(u.last_login) : '<span class="meta">never</span>'}</td>
-        <td data-label="Activity"><button type="button" class="link" data-act="events" data-id="${u.id}" title="See ${esc(u.username)}'s activity">${u.events} event${u.events === 1 ? "" : "s"}</button>
-          <div class="meta">${u.last_activity ? `last ${ago(u.last_activity)}` : "none yet"}</div></td>
+        <td data-label="Last signed in">${lastSignedIn(u)}</td>
+        <td data-label="Last active">${lastActive(u)}</td>
         <td class="actions r"><div class="row-actions">
           ${[["pw", "key", "Reset password", ""], ["role", "shield", u.role === "admin" ? "Make user (remove admin)" : "Make admin", ""],
              ["active", u.active ? "ban" : "ok", u.active ? "Disable sign-in" : "Enable sign-in", ""], ["del", "trash", "Delete user", " danger"]]
             .map(([act, ic, label, cls]) => `<button type="button" class="more icon-btn${cls}" data-act="${act}" data-id="${u.id}" title="${label}" aria-label="${label}: ${esc(u.username)}"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[ic]}</svg></button>`).join("")}
         </div></td>
-      </tr>`).join("");
-  } catch (e) { body.innerHTML = `<tr><td colspan="7" class="ldr">${esc(e.message)}</td></tr>`; }
+      </tr>`).join("") || `<tr><td colspan="8" class="ldr">${uf.group ? "Nobody matches. Choose another group, or Everyone." : "No users."}</td></tr>`;
 }
+let userRegions = [];
+async function loadUsers() {
+  const body = $("#user-rows");
+  if (!userCache.length) body.innerHTML = `<tr><td colspan="8">${sk(3)}</td></tr>`;
+  try {
+    const d = await api("/api/admin/users");
+    userCache = d.users; groupCache = d.groups || []; userRegions = d.regions;
+    if ($("#u-region").options.length <= 1) $("#u-region").innerHTML = '<option value="">All UK</option>' + d.regions.map((r) => `<option>${esc(r)}</option>`).join("");
+    const me = userCache.find((u) => u.username === ME.username);
+    if (me) ME.groups = groupCache.filter((g) => me.group_ids.includes(g.id)).map((g) => g.name);          // the account dialog shows these
+    renderGroups(); renderUsers();
+  } catch (e) { body.innerHTML = `<tr><td colspan="8" class="ldr">${esc(e.message)}</td></tr>`; }
+}
+// ------------------------------------------------------------------ groups: named sets of people
+const gMsg = (text) => { const m = $("#g-msg"); m.hidden = !text; m.textContent = text || ""; };
+const busy = async (form, fn) => {            // one request at a time per form: a double click must not send it twice
+  const btn = form.querySelector("button[type=submit]");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try { await fn(); } finally { btn.disabled = false; }
+};
+$("#gform").addEventListener("submit", (e) => {
+  e.preventDefault(); gMsg("");
+  busy(e.target, async () => {
+    try {
+      const r = await api("/api/admin/groups", { method: "POST", body: { name: $("#g-name").value } });
+      toast(`Group “${r.name}” created`); $("#g-name").value = ""; await loadUsers(); $("#g-name").focus();
+    } catch (err) { gMsg(err.message); }
+  });
+});
+const groupById = (id) => groupCache.find((g) => String(g.id) === String(id));
+function renameDialog(g) {
+  openModal(); $("#modal-back").hidden = true;
+  $("#modal-title").textContent = `Rename group: ${g.name}`;
+  $("#modal-explain").textContent = "Its members stay in it; only the name changes.";
+  $("#modal-body").innerHTML = `<form id="grform" class="form-row"><label class="field">Group name<input id="gr-name" class="search" required maxlength="40" value="${esc(g.name)}" autocomplete="off"></label>
+    <button class="btn" type="submit">Save</button><button type="button" class="more" id="gr-cancel">Cancel</button></form><p id="gr-msg" class="hint" role="alert"></p>`;
+  $("#gr-name").focus(); $("#gr-name").select();
+  $("#gr-cancel").addEventListener("click", closeModal);
+  $("#grform").addEventListener("submit", (e) => {
+    e.preventDefault();
+    busy(e.target, async () => {
+      try { const r = await api(`/api/admin/groups/${g.id}`, { method: "PATCH", body: { name: $("#gr-name").value } }); closeModal(); toast(`Renamed to “${r.name}”`); loadUsers(); }
+      catch (err) { $("#gr-msg").textContent = err.message; }
+    });
+  });
+}
+function membersDialog(g) {
+  openModal(); $("#modal-back").hidden = true;
+  $("#modal-title").textContent = `Members: ${g.name}`;
+  $("#modal-explain").textContent = "Tick everyone who should be in this group, then save. Anyone you untick is only taken out of the group; nobody is deleted.";
+  const inG = new Set(g.members.map((m) => m.id));
+  $("#modal-body").innerHTML = `<form id="gmform"><fieldset class="mem-list"><legend class="sr-only">People in ${esc(g.name)}</legend>${userCache.map((u) => `<label class="mem"><input type="checkbox" value="${u.id}" ${inG.has(u.id) ? "checked" : ""}><span class="mem-n">${esc(u.username)}${u.username === ME.username ? " (you)" : ""}</span><span class="badge ${u.role === "admin" ? "wm" : "uk"}">${esc(u.role)}</span>${u.active ? "" : '<span class="badge off">disabled</span>'}</label>`).join("")}</fieldset>
+    <div class="mem-tools"><button type="button" class="link" id="gm-all">Tick everyone</button><button type="button" class="link" id="gm-none">Untick everyone</button><span class="meta" id="gm-count" aria-live="polite"></span></div>
+    <div class="mem-actions"><button class="btn" type="submit">Save members</button><button type="button" class="more" id="gm-cancel">Cancel</button></div><p id="gm-msg" class="hint" role="alert"></p></form>`;
+  const boxes = () => [...document.querySelectorAll("#gmform .mem input")];
+  const count = () => { const n = boxes().filter((b) => b.checked).length; $("#gm-count").textContent = `${n} of ${userCache.length} ticked`; };
+  count();
+  $("#gmform").addEventListener("change", count);
+  $("#gm-all").addEventListener("click", () => { boxes().forEach((b) => { b.checked = true; }); count(); });
+  $("#gm-none").addEventListener("click", () => { boxes().forEach((b) => { b.checked = false; }); count(); });
+  $("#gm-cancel").addEventListener("click", closeModal);
+  $("#gmform").addEventListener("submit", (e) => {
+    e.preventDefault();
+    busy(e.target, async () => {
+      try { const r = await api(`/api/admin/groups/${g.id}/members`, { method: "PUT", body: { user_ids: boxes().filter((b) => b.checked).map((b) => +b.value) } }); closeModal(); toast(`${g.name}: ${r.count} member${r.count === 1 ? "" : "s"}`); loadUsers(); }
+      catch (err) { $("#gm-msg").textContent = err.message; }
+    });
+  });
+}
+$("#g-list").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const g = groupById(b.dataset.g);
+  if (!g) return;
+  if (b.dataset.act === "gmembers") membersDialog(g);
+  else if (b.dataset.act === "grename") renameDialog(g);
+  else if (b.dataset.act === "gfilter") { uf.group = String(g.id); $("#u-fgroup").value = uf.group; renderUsers(); $(".users").scrollIntoView({ behavior: "smooth", block: "start" }); }
+  else if (b.dataset.act === "gdelete") {
+    if (confirm(`Delete the group “${g.name}”? ${g.count ? `Its ${g.count} member${g.count === 1 ? "" : "s"} stay${g.count === 1 ? "s" : ""} on the dashboard; they are just taken out of the group.` : "It has no members."}`))
+      api(`/api/admin/groups/${g.id}`, { method: "DELETE" }).then(() => { toast(`Group “${g.name}” deleted`); loadUsers(); }).catch((err) => toast(err.message));
+  }
+});
+$("#u-fgroup").addEventListener("change", () => { uf.group = $("#u-fgroup").value; renderUsers(); });
+$("#u-sort").addEventListener("change", () => { uf.sort = $("#u-sort").value; renderUsers(); });
 $("#u-gen").addEventListener("click", () => { $("#u-pass").value = genPassword(); });
 $("#uform").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -921,6 +1039,14 @@ $("#uform").addEventListener("submit", async (e) => {
 // copy a temporary password (deliberately not written to the activity log)
 document.addEventListener("click", async (e) => { const b = e.target.closest("button[data-pw]"); if (b) toast((await copyText(b.dataset.pw)) ? "Password copied" : "Copy failed: select it manually"); });
 $("#user-rows").addEventListener("change", async (e) => {
+  const gsel = e.target.closest(".u-gadd");
+  if (gsel) {
+    if (!gsel.value) return;
+    const g = groupCache.find((x) => String(x.id) === gsel.value), u = userCache.find((x) => String(x.id) === gsel.dataset.id);
+    try { await api(`/api/admin/groups/${gsel.value}/members/${gsel.dataset.id}`, { method: "PUT" }); toast(`${u.username} added to ${g.name}`); }
+    catch (err) { toast(err.message); }
+    loadUsers(); return;
+  }
   const sel = e.target.closest(".u-reg");
   if (!sel) return;
   try { await api(`/api/admin/users/${sel.dataset.id}`, { method: "PATCH", body: { region: sel.value } }); toast("Region saved"); }
@@ -930,6 +1056,11 @@ $("#user-rows").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   const u = userCache.find((x) => String(x.id) === b.dataset.id);
+  if (b.dataset.act === "ungroup") {
+    const g = groupCache.find((x) => String(x.id) === b.dataset.g);
+    api(`/api/admin/groups/${g.id}/members/${u.id}`, { method: "DELETE" }).then(() => { toast(`${u.username} taken out of ${g.name}`); loadUsers(); }).catch((err) => toast(err.message));
+    return;
+  }
   const patch = (body) => api(`/api/admin/users/${u.id}`, { method: "PATCH", body }).then(loadUsers).catch((err) => toast(err.message));
   if (b.dataset.act === "role") patch({ role: u.role === "admin" ? "user" : "admin" });
   else if (b.dataset.act === "active") patch({ active: !u.active });
@@ -1139,7 +1270,7 @@ $("#ob-go").addEventListener("click", () => finishOnboarding(false));
 $("#usermenu").addEventListener("click", () => {
   openModal(); $("#modal-back").hidden = true;
   $("#modal-title").textContent = ME.username;
-  $("#modal-explain").textContent = `${ME.role === "admin" ? "Administrator" : "User"} · ${ME.database ? "activity is logged" : "database not connected"}`;
+  $("#modal-explain").textContent = `${ME.role === "admin" ? "Administrator" : "User"} · ${ME.database ? "activity is logged" : "database not connected"}${ME.groups && ME.groups.length ? ` · ${ME.groups.length === 1 ? "Group" : "Groups"}: ${ME.groups.join(", ")}` : ""}`;
   $("#modal-body").innerHTML = ME.database ? `<h3 class="sub">Change password</h3>
     <form id="mypw" class="form-row"><input class="sr-only-input" type="text" name="username" value="${esc(ME.username)}" autocomplete="username" tabindex="-1" aria-hidden="true">
       <label class="field">Current password<input id="pw-cur" class="search" type="password" required autocomplete="current-password"></label>
