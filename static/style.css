@@ -1091,3 +1091,4 @@ select.search { flex: 0 1 210px; }
   .users .who { min-width: 0; }
   .users .who .nm { overflow-wrap: anywhere; }
 }
+@media (min-width: 1280px) { .users .badge, .users .gchip { white-space: nowrap; } }
