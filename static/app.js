@@ -1063,7 +1063,7 @@ function renderUsers() {
         <td class="who-cell"><div class="who"><span class="nm">${esc(u.username)}${u.username === ME.username ? ' <span class="badge src">you</span>' : ""}</span><span class="meta">created ${fmtDate(u.created_at)}${u.created_by ? ` by ${esc(u.created_by)}` : ""}</span><span class="meta u-mail${u.email ? "" : " none"}">${u.email ? `${esc(u.email)}${u.email_alerts ? "" : " · alert emails off"}` : "no email address"}</span></div></td>
         <td data-label="Role"><span class="badge ${u.role === "admin" ? "wm" : "uk"}">${esc(u.role)}</span></td>
         <td data-label="Groups" class="ugrp-cell">${groupCell(u)}</td>
-        <td data-label="Region"><select class="search u-reg" data-id="${u.id}" aria-label="Region for ${esc(u.username)}">${regionOpts(u.region)}</select></td>
+        <td data-label="Region"><select class="search u-reg" title="${esc(u.region || "All UK")}" data-id="${u.id}" aria-label="Region for ${esc(u.username)}">${regionOpts(u.region)}</select></td>
         <td data-label="Status"><div class="st">${u.active ? '<span class="badge on">active</span>' : '<span class="badge off">disabled</span>'}${u.must_change ? '<span class="badge wm" title="They must choose their own password when they next sign in">must set password</span>' : ""}</div></td>
         <td data-label="Last signed in">${lastSignedIn(u)}</td>
         <td data-label="Last active">${lastActive(u)}</td>

@@ -1077,3 +1077,17 @@ select.search { flex: 0 1 210px; }
 #tab-settings .card + .card { margin-top: 16px; }
 .mkrow { padding-right: 14px; }
 .mb-row { padding-right: 4px; }
+
+/* Users table: always fits its container; the Region menu and the text columns give way before anything scrolls */
+@media (min-width: 1280px) {
+  .users { min-width: 0; table-layout: auto; }
+  .users td, .users th { white-space: normal; }
+  .users td.actions { white-space: nowrap; }
+  .users th { white-space: nowrap; padding-left: 10px; padding-right: 10px; }
+  .users td { padding-left: 10px; padding-right: 10px; }
+  .users select.search { min-width: 0; width: 100%; max-width: 150px; }
+  .users td[data-label="Region"] { width: 140px; }
+  .users td.ugrp-cell { min-width: 120px; max-width: 200px; }
+  .users .who { min-width: 0; }
+  .users .who .nm { overflow-wrap: anywhere; }
+}
