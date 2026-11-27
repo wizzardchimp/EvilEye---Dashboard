@@ -534,8 +534,8 @@ select.search { flex: 0 1 210px; }
 .users { min-width: 900px; }
 .users td, .users th { white-space: nowrap; }
 .users .who .meta { white-space: normal; }
-/* phones: each user becomes a stacked card instead of a squeezed table row */
-@media (max-width: 640px) {
+/* below 1180px each user becomes a stacked card instead of a table row that runs past the container's edge */
+@media (max-width: 1279px) {
   .users { min-width: 0; } .users thead { display: none; }
   .users, .users tbody, .users tr, .users td { display: block; width: 100%; }
   .users tbody tr { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
@@ -1058,3 +1058,22 @@ select.search { flex: 0 1 210px; }
 .mb-main { display: grid; gap: 2px; min-width: 0; }
 .mb-main strong { overflow-wrap: anywhere; }
 @media (max-width: 520px) { .ab-two { grid-template-columns: 1fr; } }
+
+/* ---------- bigger, bolder icons ---------- */
+.icon-btn { width: 42px; height: 40px; }
+.icon-btn svg { width: 22px; height: 22px; stroke-width: 2.3; }
+.row-actions { gap: 6px; }
+@media (max-width: 1279px) { .row-actions { flex-wrap: wrap; } }
+.row-actions .icon-btn { width: 38px; height: 38px; }
+.row-actions .icon-btn svg { width: 21px; height: 21px; }
+.flagbtn { width: 34px; height: 34px; }
+.flagbtn svg { width: 19px; height: 19px; stroke-width: 2.2; }
+.badge.mk svg, .badge.alloc svg { width: 13px; height: 13px; }
+.tabadd { width: 30px; height: 30px; font-size: calc(22px * var(--fs)); }
+.dsec-i svg { width: 22px; height: 22px; }
+@media (max-width: 640px) { .status-row > .icon-btn { width: 38px; height: 38px; } .status-row > .icon-btn svg { width: 21px; height: 21px; } }
+@media (max-width: 380px) { .status-row > .icon-btn { width: 34px; height: 34px; } .status-row > .icon-btn svg { width: 19px; height: 19px; } }
+/* settings: space between the cards, and room at the right-hand edge of each row */
+#tab-settings .card + .card { margin-top: 16px; }
+.mkrow { padding-right: 14px; }
+.mb-row { padding-right: 4px; }
