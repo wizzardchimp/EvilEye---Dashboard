@@ -1,8 +1,8 @@
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmtDate = (iso) => (iso ? new Date(iso).toUTCString().slice(5, 16) : "—");
-const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—");
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "—");      // day month year, 24-hour times, whatever the browser's language
+const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "—");
 function ago(iso) {
   if (!iso) return "";
   const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -22,6 +22,7 @@ const root = document.documentElement;
 function setTheme(t) {
   if (t === "light") root.dataset.theme = "light"; else delete root.dataset.theme;
   try { localStorage.setItem("evileye-theme", t); } catch (e) { /* storage unavailable */ }
+  const tc = document.querySelector('meta[name="theme-color"]'); if (tc) tc.content = t === "light" ? "#f1f3f8" : "#151b26";
   const b = $("#theme");
   if (b) { b.setAttribute("aria-pressed", String(t === "light")); b.title = t === "light" ? "Switch back to the dark theme" : "Invert colour scheme (light theme)"; }
 }
@@ -36,11 +37,24 @@ let ME = null;       // { username, role, region, database, regions, prev_visit 
 let region = "";     // selected ROCU region ("" = all UK); this is also the user's saved preference
 
 // ------------------------------------------------------------------ api
-async function api(path, opts = {}) {
+let writeEpoch = 0;                         // counts changes made through api(): a read that started before one is never shared with one that starts after it
+const inflight = new Map();
+function api(path, opts = {}) {
+  if (!opts.method || opts.method === "GET") {
+    const hit = inflight.get(path);
+    if (hit && hit.epoch === writeEpoch) return hit.p;                       // two parts of the page asking for the same thing at once make one request
+    const p = apiCall(path, opts).finally(() => { if (inflight.get(path) && inflight.get(path).p === p) inflight.delete(path); });
+    inflight.set(path, { p, epoch: writeEpoch });
+    return p;
+  }
+  writeEpoch++;
+  return apiCall(path, opts).finally(() => { writeEpoch++; });
+}
+async function apiCall(path, opts = {}) {
   const o = { ...opts, headers: { ...(opts.headers || {}), "X-Requested-With": "fetch" } };
   if (o.body && typeof o.body !== "string") { o.body = JSON.stringify(o.body); o.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, o);
-  if (r.status === 401) { location.href = "/login"; throw new Error("Unauthorized"); }
+  if (r.status === 401) { try { sessionStorage.setItem("evileye-return", location.hash); } catch (e) { /* ignore */ } location.href = "/login"; throw new Error("Unauthorized"); }
   let j = {};
   try { j = await r.json(); } catch (e) { /* no body */ }
   if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -65,6 +79,8 @@ function tabFade() {       // only on screens too narrow for every tab: fade the
 }
 tabsEl.addEventListener("scroll", tabFade, { passive: true });
 window.addEventListener("resize", tabFade);
+const baseTitle = () => { const b = document.querySelector(".tab.active"); return (b ? b.textContent.trim() + " · " : "") + "EvilEye"; };
+function setTitle() { document.title = (typeof drawer !== "undefined" && !drawer.hidden && drawerVictim ? `${drawerVictim.post_title} · ` : "") + baseTitle(); }       // the tab (or the breach) in the browser title and history
 function showTab(name, fromClick) {
   const btn = document.querySelector(`.tab[data-tab="${name}"]`);
   if (!btn || btn.hidden) return;
@@ -73,7 +89,7 @@ function showTab(name, fromClick) {
   tabFade();
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
   if (fromClick) track("tab_view", name);
-  updateFilterBar(); syncHash(); refreshCurrent();
+  setTitle(); updateFilterBar(); syncHash(); refreshCurrent();
 }
 document.querySelectorAll(".tab").forEach((btn) => btn.addEventListener("click", () => showTab(btn.dataset.tab, true)));
 function refreshCurrent() { (TABS[activeTab()] || loadOverview)(); }
@@ -207,18 +223,19 @@ async function loadTicker(expanding = false) {
     TK.uk.total = d.uk_total; TK.reg.total = d.regional_total; tkItems = { uk: d.uk, reg: d.regional };
     setList("#tk-uk", d.uk.length ? d.uk.map((x, i) => tickerItem(x, true, fresh(x, i), "uk", i)).join("") : '<li class="ldr">no data yet — still syncing</li>');
     $("#tk-region").textContent = d.region || "your region";
+    document.querySelector(".ticker").classList.toggle("solo", !d.region);
     setList("#tk-reg", !d.region
       ? '<li class="ldr">Choose a region in the header to see its latest incidents here.</li>'
       : d.regional.length ? d.regional.map((x, i) => tickerItem(x, false, fresh(x, i), "reg", i)).join("") : `<li class="ldr">No placed incidents in ${esc(d.region)} yet.</li>`);
     tickerSeen = new Set([...d.uk, ...d.regional].map((x) => x.title));
     tickerFoot("uk"); tickerFoot("reg");
-    $("#tk-updated").textContent = d.updated ? `data ${ago(d.updated)}` : "";
+    $("#tk-updated").textContent = (d.updated ? `data ${ago(d.updated)}` : "") + (d.region ? "" : " · choose a region in the header to follow one here");
   } catch (e) { /* keep what is on screen */ }
 }
 async function openBreach(ref) {
   const [list, i] = ref.split(":"), x = tkItems[list] && tkItems[list][+i];
   if (!x) return;
-  try { const v = await fetchVictim(x.title); if (v) openVictim(v); else toast("Could not find that breach any more."); }
+  try { const v = await fetchVictim(x.title); if (v) { setPaneList(tkItems[list].map((y) => y.title), v.post_title); openVictim(v); } else toast("Could not find that breach any more."); }
   catch (e) { toast("Could not load the breach details: " + e.message); }
 }
 document.querySelector(".ticker").addEventListener("keydown", (e) => {
@@ -259,10 +276,10 @@ async function loadOverview() {
     const d = await api(`/api/summary?${rq()}`);
     holder.innerHTML = [
       [region ? `${region === "Unplaced" ? "Unplaced" : region} victims` : "UK victims", d.uk_total, region ? "hl" : ""],
-      ["UK victims (all regions)", d.uk_all, ""],
+      region ? ["UK victims (all regions)", d.uk_all, ""] : null,
       ["Dark web news (7 days)", d.news_7d, ""],
       ["Gangs tracked", d.gangs_total, ""],
-    ].map(([label, num, cls]) => `<div class="stat ${cls}"><div class="num">${num ?? 0}</div><div class="label">${label}</div></div>`).join("");
+    ].filter(Boolean).map(([label, num, cls]) => `<div class="stat ${cls}"><div class="num">${num ?? 0}</div><div class="label">${label}</div></div>`).join("");
     drawBars(y, d.by_year.map((r) => [r.year, r.count]));
     drawBars(g, d.top_gangs.map((r) => [r.group, r.count]));
     drawBars(s, d.top_sectors.map((r) => [r.sector, r.count]));
@@ -379,7 +396,7 @@ async function showSlice(kind, label) {
         <div class="name">${esc(v.post_title)}${townLabel(v)}${newBadge(v)}</div>
         <div class="meta"><span class="badge grp">${esc(v.group || "unknown")}</span> · ${esc(v.activity)} · ${fmtDate(v.discovered)} · ${esc(v.rocu === "Unplaced" ? "region unknown" : v.rocu)}</div>
       </div>`).join("") : '<div class="ldr">no victims in this slice</div>';
-  list.querySelectorAll(".vc").forEach((el) => el.addEventListener("click", () => { closeModal(); openVictim(d.victims[+el.dataset.i]); }));
+  list.querySelectorAll(".vc").forEach((el) => el.addEventListener("click", () => { closeModal(); setPaneList(d.victims.map((y) => y.post_title), d.victims[+el.dataset.i].post_title); openVictim(d.victims[+el.dataset.i]); }));
 }
 $("#tab-overview").addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-detail]");
@@ -405,7 +422,8 @@ function victimParams(extra = {}) {
   if (vm.newOnly) p.set("new", "1");
   return p;
 }
-const regionCell = (v) => v.rocu === "Unplaced" ? '<span class="badge src">region unknown</span>'
+const regionBadge = (v) => (v.rocu === "Unplaced" ? '<span class="badge src">region unknown</span>' : regionCell(v).split("<div")[0]);
+const regionCell = (v) => v.rocu === "Unplaced" ? '<span class="rg-none" title="No region yet: it could not be placed from its description or the register"><span aria-hidden="true">&ndash;</span><span class="sr-only">region unknown</span></span>'
   : v.rocu === "Overseas / not UK" ? '<span class="badge off">Overseas / not UK</span>'
   : `<span class="badge uk">${esc(v.rocu)}</span><div class="meta">${esc(v.force_name)}${v.region_source === "manual" ? " · set manually" : ""}</div>`;
 async function loadVictims() {
@@ -456,7 +474,7 @@ document.querySelectorAll("th.sortable").forEach((th) => th.addEventListener("cl
   vm.dir = vm.sort === k ? (vm.dir === "asc" ? "desc" : "asc") : (k === "seen" ? "desc" : "asc");
   vm.sort = k; vm.page = 0; loadVictims(); track("filter", `victims sort: ${k} ${vm.dir}`);
 }));
-const openRow = (tr) => { if (tr && lastVictims[+tr.dataset.i]) openVictim(lastVictims[+tr.dataset.i]); };
+const openRow = (tr) => { if (tr && lastVictims[+tr.dataset.i]) { setPaneList(lastVictims.map((v) => v.post_title), lastVictims[+tr.dataset.i].post_title); openVictim(lastVictims[+tr.dataset.i]); } };
 $("#victim-rows").addEventListener("click", (e) => { if (!e.target.closest("a, button")) openRow(e.target.closest("tr.clickable")); });
 $("#victim-rows").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.target.closest("button")) openRow(e.target.closest("tr.clickable")); });
 
@@ -569,7 +587,7 @@ function openVictim(v, quiet = false) {
   const where = `${v.rocu === "Unplaced" ? "Unknown" : esc(v.rocu)}${v.force_name ? ` · ${esc(v.force_name)}` : ""}${v.town && placed(v) && v.town !== v.force_name ? ` · ${esc(v.town)}` : ""}`;
   $("#dr-body").innerHTML = `
     <div class="dsum">
-      <div class="dsum-b">${newBadge(v).trim()}${v.manual_breach ? ` <span class="badge src" title="Added by hand by ${esc(v.added_by)}">added by hand</span>` : ""} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionCell(v).split("<div")[0]}</div>
+      <div class="dsum-b">${newBadge(v).trim()}${v.manual_breach ? ` <span class="badge src" title="Added by hand by ${esc(v.added_by)}">added by hand</span>` : ""} <span class="badge grp">${esc(v.group)}</span> <span class="badge src">${esc(v.activity)}</span> ${regionBadge(v)}</div>
       ${ME.database ? `<div class="dr-actions">${marks(v)}<button class="more" type="button" data-flag="dr">${ICON_FLAG} Flag or allocate</button></div>` : ""}
     </div>
     ${sect("details", "Breach details", `<dl class="facts">
@@ -581,26 +599,30 @@ function openVictim(v, quiet = false) {
       ${v.reposts ? fact("Re-posted", `${v.reposts} more time${v.reposts === 1 ? "" : "s"} <span class="meta">by the same group</span>`) : ""}
     </dl>`)}
     ${ME.database ? sect("flags", "Flags and tasks", flagsHtml(v)) : ""}
-    ${sect("company", "Company (Companies House)", `<div id="br-co">${prev.co ?? companyHtml(null)}</div>`)}
-    ${sect("gang", "Gang responsible", `<div id="br-gang">${prev.gang ?? gangHtml(null)}</div>`)}
-    ${sect("sources", "Where this was sourced from", `<div id="br-src">${prev.src ?? sourcesHtml(v, null)}</div>`)}
     ${sect("region", "Region", `<dl class="facts">
       ${fact("Region", where)}
       ${v.registered_name ? fact("Registered as", esc(v.registered_name)) : ""}
       ${fact("Basis", `${esc(basis)}${v.region_source && v.region_source !== "flag" && v.why ? ` ${esc(v.why)}` : ""}${v.override_note ? ` Note: ${esc(v.override_note)}` : ""}`, true)}
-    </dl>`)}
-    ${v.description ? sect("description", "Description (from ransomware.live)", `<div class="desc">${esc(v.description)}</div>`) : ""}
-    ${canEdit ? sect("admin", "Admin: set region", `<form id="plform" class="form-row">
+    </dl>${canEdit ? `<details class="admin-details"${v.manual ? " open" : ""}><summary>Set the region by hand (admin)</summary><form id="plform" class="form-row">
         <label class="field">Region<select id="pl-rocu" class="search">${ME.regions.filter((r) => r !== "Unplaced").map((r) => `<option ${r === v.rocu ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
         <label class="field">Town / district<input id="pl-town" class="search" maxlength="60" value="${esc(v.manual ? v.town : "")}" placeholder="optional"></label>
         <label class="field">Note<input id="pl-note" class="search" maxlength="200" value="${esc(v.override_note || "")}" placeholder="optional"></label>
         <div class="fr-btns"><button class="btn" type="submit">Save</button>
         ${v.manual ? '<button class="more danger" type="button" id="pl-clear">Remove manual placement</button>' : ""}</div>
-      </form><p id="pl-msg" class="hint"></p>`, "admin") : ""}`;
-  drawer.hidden = false; backdrop.hidden = false;
+      </form><p id="pl-msg" class="hint"></p></details>` : ""}`)}
+    ${sect("company", "Company (Companies House)", `<div id="br-co">${prev.co ?? companyHtml(null)}</div>`)}
+    ${sect("gang", "Gang responsible", `<div id="br-gang">${prev.gang ?? gangHtml(null)}</div>`)}
+    ${sect("sources", "Where this was sourced from", `<div id="br-src">${prev.src ?? sourcesHtml(v, null)}</div>`)}
+    ${v.description ? sect("description", "Description (from ransomware.live)", `<div class="desc">${esc(v.description)}</div>`) : ""}
+`;
+  drawer.hidden = false; backdrop.hidden = false; setTitle();
+  if (!quiet && paneNav.titles[paneNav.i] !== v.post_title) paneNav = { titles: [], i: -1 };         // opened from somewhere with no list (search, a link)
+  const nv = paneNav, many = nv.i >= 0 && nv.titles.length > 1;
+  $("#dr-nav").hidden = !many;
+  if (many) { $("#dr-pos").textContent = `${nv.i + 1} of ${nv.titles.length}`; $("#dr-prev").disabled = nv.i === 0; $("#dr-next").disabled = nv.i === nv.titles.length - 1; }
   $("#dr-body").scrollTop = prev.scroll || 0;      // after showing it (a hidden box ignores this): a different breach starts at the top, a refresh after a flag keeps its place and its loaded sections
   loadBreachExtras(v); loadCompany(v);
-  const done = () => { closeDrawer(); loadVictims(); loadTicker(); toast("Region updated"); };
+  const done = () => { toast("Region updated"); afterMark(v.post_title); };
   $("#plform")?.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     try { await api("/api/admin/placement", { method: "PUT", body: { title: v.post_title, rocu: $("#pl-rocu").value, town: $("#pl-town").value, note: $("#pl-note").value } }); done(); }
@@ -612,6 +634,18 @@ function openVictim(v, quiet = false) {
   });
 }
 $("#dr-close").addEventListener("click", closeDrawer);
+async function paneStep(d) {
+  const i = paneNav.i + d;
+  if (i < 0 || i >= paneNav.titles.length) return;
+  try { const v = await fetchVictim(paneNav.titles[i]); if (v) { paneNav.i = i; openVictim(v); } else toast("That breach is no longer on the dashboard."); }
+  catch (e) { toast("Could not load the breach: " + e.message); }
+}
+$("#dr-prev").addEventListener("click", () => paneStep(-1));
+$("#dr-next").addEventListener("click", () => paneStep(1));
+$("#dr-link").addEventListener("click", async () => {
+  if (!drawerVictim) return;
+  toast((await copyText(`${location.origin}/?open=${encodeURIComponent(drawerVictim.post_title)}`)) ? "Link copied: it opens this breach after sign-in" : "Copy failed: select the address from the bar instead");
+});
 backdrop.addEventListener("click", closeDrawer);
 
 // ------------------------------------------------------------------ dark web news page
@@ -778,6 +812,8 @@ async function fetchVictim(title) {                          // not region-filte
   const d = await api(`/api/victims?${new URLSearchParams({ title, limit: "1" })}`);
   return d.items.find((x) => x.post_title === title) || null;
 }
+let paneNav = { titles: [], i: -1 };                       // the list the open breach came from, so the pane can step to the next or previous one
+function setPaneList(titles, title) { const u = [...new Set(titles)]; paneNav = { titles: u, i: u.indexOf(title) }; }
 async function afterMark(title) {
   loadTicker(); loadLive(); refreshCurrent(); if (!trdlg.hidden) trLoad(false, true);
   if (!drawer.hidden && drawerVictim && drawerVictim.post_title === title) {
@@ -1041,7 +1077,7 @@ function renderGroups() {
     return `<div class="ugrp" data-g="${g.id}">
       <div class="ugrp-h"><button type="button" class="ugrp-name" data-act="gfilter" data-g="${g.id}" title="Show only the people in ${esc(g.name)}">${esc(g.name)}</button><span class="meta">${g.count} member${g.count === 1 ? "" : "s"}</span></div>
       <div class="ugrp-m ${g.count ? "" : "meta"}">${g.count ? names : "Nobody yet"}</div>
-      <div class="ugrp-a"><button type="button" class="more" data-act="gmembers" data-g="${g.id}">Members</button><button type="button" class="more" data-act="grename" data-g="${g.id}">Rename</button><button type="button" class="more danger" data-act="gdelete" data-g="${g.id}" aria-label="Delete the group ${esc(g.name)}">Delete</button></div></div>`;
+      <div class="ugrp-a"><button type="button" class="more" data-act="gmembers" data-g="${g.id}">Members</button><button type="button" class="more" data-act="galerts" data-g="${g.id}" title="Choose which regions this group is emailed about">Email alerts</button><button type="button" class="more" data-act="grename" data-g="${g.id}">Rename</button><button type="button" class="more danger" data-act="gdelete" data-g="${g.id}" aria-label="Delete the group ${esc(g.name)}">Delete</button></div></div>`;
   }).join("") : '<p class="hint" style="margin:0">No groups yet. Create one above, then put people in it.</p>';
   const keep = uf.group;
   $("#u-fgroup").innerHTML = '<option value="">Everyone</option><option value="none">People in no group</option>' + groupCache.map((g) => `<option value="${g.id}">${esc(g.name)} (${g.count})</option>`).join("");
@@ -1095,41 +1131,68 @@ const busy = async (form, fn) => {            // one request at a time per form:
 };
 // ------------------------------------------------------------------ the live-tasks banner (Overview, above the two lists)
 const lbOnly = () => { try { return localStorage.getItem("evileye-lb-region") !== "0"; } catch (e) { return true; } };      // with a region chosen the banner is that region's, unless somebody has switched that off
+const lbMine = () => { try { return localStorage.getItem("evileye-lb-mine") === "1"; } catch (e) { return false; } };
 const agoShort = (iso) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 90 ? "just now" : secsText(s).split(" ")[0] + " ago"; };
+const daysSince = (iso) => (Date.now() - new Date(iso).getTime()) / 86400000;
+const STALE_DAYS = 3, VERY_STALE_DAYS = 7;                          // a task still waiting after this long turns amber, then red
+const mineItem = (x) => x.by === ME.username || !!(ME.initials && x.initials === ME.initials);
+let lbItems = [];
+function quickAction(x) {                                           // the one next step this person can take straight from the tile
+  if (x.status === "unallocated") return { q: "take", label: "Take", tip: "Put your initials on this Task" };
+  if (!canEditMarker(x)) return null;
+  return x.status === "allocated" ? { q: "start", label: "Start", tip: "Mark this as started now" } : x.status === "started" ? { q: "done", label: "Done", tip: "Mark this as completed now" } : null;
+}
 async function loadLive() {
   const bar = $("#livebar");
   if (!ME || !ME.database) { bar.hidden = true; return; }
-  const only = !!region && lbOnly();
-  $("#lb-only-wrap").hidden = !region; $("#lb-region").textContent = region === "Unplaced" ? "region unknown" : region; $("#lb-only").checked = only;
+  const only = !!region && lbOnly(), mine = lbMine();
+  $("#lb-only-wrap").hidden = !region; $("#lb-region").textContent = region === "Unplaced" ? "region unknown" : region; $("#lb-only").checked = only; $("#lb-mine").checked = mine;
   try {
     const d = await api(`/api/markers/live${only ? "?" + new URLSearchParams({ rocu: region }) : ""}`);
-    const items = d.items.filter((x) => x.status !== "completed");                 // finished tasks are never on the banner
-    bar.hidden = !items.length && !only && !d.ever;
-    $("#lb-count").textContent = items.length ? `· ${d.total}` : "";
-    const list = $("#lb-list");
+    const all = d.items.filter((x) => x.status !== "completed");                 // finished tasks are never on the banner
+    const items = mine ? all.filter(mineItem) : all;
+    lbItems = items;
+    bar.hidden = !all.length && !only && !d.ever;
+    $("#lb-count").textContent = items.length ? (mine ? `· ${items.length} of ${d.total}` : `· ${d.total}`) : "";
+    const un = all.filter((x) => x.status === "unallocated").length, stale = all.filter((x) => x.status !== "started" && daysSince(x.allocated_at) >= STALE_DAYS).length;
+    $("#lb-attn").innerHTML = (un ? `<button type="button" class="lb-chip" data-attn="unallocated" title="Tasks nobody has taken yet">${un} unallocated</button>` : "")
+      + (stale ? `<button type="button" class="lb-chip bad" data-attn="stale" title="Tasks still waiting to be started">${stale} waiting ${STALE_DAYS}+ days</button>` : "");
     const place = (x) => (x.rocu === "Unplaced" ? "region unknown" : !x.rocu ? "left the feed" : only ? (x.town || x.rocu) : x.town ? `${x.rocu} · ${x.town}` : x.rocu);
-    list.innerHTML = items.length ? items.map((x) => `<button type="button" class="lb-tile ${x.status}" role="listitem" data-title="${esc(x.title)}" style="--mk:${safeColour(x.colour)}" title="${esc(x.title + " · " + markerText(x))}">
+    $("#lb-list").innerHTML = items.length ? items.map((x) => {
+      const qa = quickAction(x), wait = x.status === "started" ? 0 : daysSince(x.allocated_at), age = wait >= VERY_STALE_DAYS ? "bad" : wait >= STALE_DAYS ? "warn" : "";
+      return `<li class="lb-item${qa ? " has-qa" : ""}"><button type="button" class="lb-tile ${x.status}" data-title="${esc(x.title)}" style="--mk:${safeColour(x.colour)}" title="${esc(x.title + " · " + markerText(x))}">
         <span class="lb-name">${esc(x.title)}</span>
         <span class="lb-row"><span class="badge${x.builtin ? " alloc" : ""} mk ${x.status}" style="--mk:${safeColour(x.colour)}">${mkIcon(x)}${esc(mkShort(x.name))}</span>${x.status === "unallocated" ? "" : `<b class="lb-ini">${esc(x.initials)}</b>`}<span class="lb-st">${esc(MK_STATUS[x.status])}</span></span>
-        <span class="lb-meta"><span class="lb-pl">${esc(place(x))}</span><span class="lb-ago">${x.started_at ? "started" : x.status === "unallocated" ? "marked" : "allocated"} ${esc(agoShort(x.started_at || x.allocated_at))}</span></span></button>`).join("")
-      : `<p class="hint" style="margin:0">Nothing live${only ? ` in ${esc(region)}` : ""} right now. Review all tasks to see the finished ones.</p>`;
+        <span class="lb-meta"><span class="lb-pl">${esc(place(x))}</span><span class="lb-ago${age ? " " + age : ""}">${age ? '<b aria-hidden="true">! </b>' : ""}${x.started_at ? "started" : x.status === "unallocated" ? "marked" : "allocated"} ${esc(agoShort(x.started_at || x.allocated_at))}${age ? '<span class="sr-only"> (overdue)</span>' : ""}</span></span></button>
+        ${qa ? `<button type="button" class="lb-q" data-q="${qa.q}" data-id="${x.id}" data-title="${esc(x.title)}" title="${esc(qa.tip)}" aria-label="${esc(qa.label + ": " + x.title)}">${qa.label}</button>` : ""}</li>`;
+    }).join("")
+      : `<li class="lb-empty hint">${mine ? "Nothing is assigned to you right now." : `Nothing live${only ? ` in ${esc(region)}` : ""} right now. Review all tasks to see the finished ones.`}</li>`;
   } catch (e) { /* leave the banner as it was */ }
 }
-const lbKey = $("#lb-key"), lbKeyBtn = $("#lb-legend");
-const keyRow = (cls, label, text) => `<div class="lk-row"><span class="badge mk alloc ${cls}" style="--mk:#44c593">${label}</span><span>${text}</span></div>`;
-lbKey.innerHTML = `<strong>Key</strong>
-  ${keyRow("allocated", ICON_CROWN + "&ndash; JS", "<b>Dash and initials</b>: someone has it. A stronger fill and a play icon mean it is in progress.")}
-  ${keyRow("unallocated", ICON_CROWN + "Task", "<b>Orange border</b>: marked as a Task, but nobody has taken it yet.")}
-  ${keyRow("completed", ICON_CROWN + ICON_TICK + "&ndash; JS", "<b>Dashed line, initials kept</b>: finished. Only seen in the breach pane and the review, never on this banner.")}`;
-const lbKeyShut = () => { lbKey.hidden = true; lbKeyBtn.setAttribute("aria-expanded", "false"); };
-lbKeyBtn.addEventListener("click", (e) => { e.stopPropagation(); lbKey.hidden = !lbKey.hidden; lbKeyBtn.setAttribute("aria-expanded", String(!lbKey.hidden)); });
-document.addEventListener("click", (e) => { if (!lbKey.hidden && !lbKey.contains(e.target)) lbKeyShut(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !lbKey.hidden) { lbKeyShut(); lbKeyBtn.focus(); } });
+async function quickAct(btn) {
+  const title = btn.dataset.title, id = btn.dataset.id, kind = btn.dataset.q;
+  const patch = (body) => api(`/api/victims/markers/${id}`, { method: "PATCH", body });
+  const undo = (body) => ({ label: "Undo", fn: () => patch(body).then(() => { afterMark(title); toast("Undone"); }).catch((e) => toast(e.message)) });
+  btn.disabled = true;
+  try {
+    if (kind === "take") {
+      if (!ME.initials) { const v = await fetchVictim(title); if (v) openFlag(v); return; }                    // no initials saved yet: the dialog asks for them
+      await api("/api/victims/markers", { method: "PUT", body: { title, initials: ME.initials } });
+      toast(`${title}: yours now (${ME.initials})`, undo({ initials: "" }));
+    } else if (kind === "start") { await patch({ started_at: "now" }); toast(`${title}: started`, undo({ started_at: null })); }
+    else { await patch({ completed_at: "now" }); toast(`${title}: completed`, undo({ completed_at: null })); }
+    afterMark(title);
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+}
+$("#lb-attn").addEventListener("click", (e) => { const b = e.target.closest("[data-attn]"); if (b) trOpen({ status: b.dataset.attn, region: !!region && lbOnly() ? region : "" }); });          // the review covers what the banner covers
+$("#lb-mine").addEventListener("change", () => { try { localStorage.setItem("evileye-lb-mine", $("#lb-mine").checked ? "1" : "0"); } catch (e) { /* ignore */ } loadLive(); });
 $("#lb-only").addEventListener("change", () => { try { localStorage.setItem("evileye-lb-region", $("#lb-only").checked ? "1" : "0"); } catch (e) { /* ignore */ } loadLive(); });
 $("#lb-list").addEventListener("click", async (e) => {
+  const q = e.target.closest(".lb-q");
+  if (q) { quickAct(q); return; }
   const t = e.target.closest(".lb-tile");
   if (!t) return;
-  try { const v = await fetchVictim(t.dataset.title); if (v) openVictim(v); else toast("Could not find that breach any more."); } catch (err) { toast("Could not load the breach details: " + err.message); }
+  try { const v = await fetchVictim(t.dataset.title); if (v) { setPaneList(lbItems.map((x) => x.title), v.post_title); openVictim(v); } else toast("Could not find that breach any more."); } catch (err) { toast("Could not load the breach details: " + err.message); }
 });
 
 // ------------------------------------------------------------------ the Task review pop-up: every marker, live and finished, for the chosen region
@@ -1138,7 +1201,7 @@ const tr = { region: "", status: "all", type: "", q: "", sort: "status", dir: ""
 const TR_COLS = [["title", "Breach"], ["marker", "Marker"], ["who", "Who"], ["status", "Status"], ["allocated", "Allocated"], ["started", "Started"], ["completed", "Completed"], ["took", "Time"]];
 const TR_SORTS = [["status:", "Needs attention first"], ["allocated:desc", "Allocated: newest first"], ["allocated:asc", "Allocated: oldest first"], ["completed:desc", "Completed: newest first"],
   ["took:desc", "Longest time first"], ["took:asc", "Shortest time first"], ["title:asc", "Breach A to Z"], ["marker:asc", "Marker A to Z"], ["who:asc", "Who A to Z"]];
-const TR_CHIPS = [["all", "All"], ["live", "Live"], ["unallocated", "Unallocated"], ["waiting", "Waiting"], ["started", "In progress"], ["completed", "Completed"]];
+const TR_CHIPS = [["all", "All"], ["live", "Live"], ["unallocated", "Unallocated"], ["stale", "Waiting 3+ days"], ["waiting", "Waiting"], ["started", "In progress"], ["completed", "Completed"]];
 const TR_ST = { unallocated: ["un", "Unallocated"], allocated: ["wm", "Waiting"], started: ["on", "In progress"], completed: ["src", "Completed"] };
 function secsText(s) {                                  // "5d 2h", "3h 10m", "12m"
   if (s === null || s === undefined) return "";
@@ -1146,11 +1209,11 @@ function secsText(s) {                                  // "5d 2h", "3h 10m", "1
   const d = Math.floor(s / 1440), h = Math.floor((s % 1440) / 60), m = s % 60;
   return d ? `${d}d${h ? ` ${h}h` : ""}` : h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
 }
-const fmtDay = (iso) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+const fmtDay = (iso) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 function fmtShort(iso) {                                // "22 Nov, 12:42" (with the year if it is not this one)
   const d = new Date(iso), o = { day: "numeric", month: "short" };
   if (d.getFullYear() !== new Date().getFullYear()) o.year = "numeric";
-  return d.toLocaleString(undefined, o);
+  return d.toLocaleDateString("en-GB", o);
 }
 const trMarker = (x) => `<span class="badge${x.builtin ? " alloc" : ""} mk ${x.status}" style="--mk:${safeColour(x.colour)}">${mkIcon(x)}${esc(mkShort(x.name))}</span>`;
 const trDate = (iso) => (iso ? `<div>${esc(fmtShort(iso))}</div><div class="meta">${esc(ago(iso))}</div>` : '<span class="meta">&ndash;</span>');
@@ -1216,9 +1279,9 @@ async function trLoad(more, refresh) {          // more: add the next page; refr
     $("#tr-more").textContent = `Show ${Math.min(50, tr.total - tr.items.length)} more`;
   } catch (e) { if (my === tr.seq) $("#tr-rows").innerHTML = `<tr><td colspan="8" class="ldr">${esc(e.message)}</td></tr>`; }
 }
-function trOpen() {
+function trOpen(opts = {}) {
   if (!ME || !ME.database) return;
-  tr.opener = document.activeElement; tr.region = region; tr.status = "all"; tr.type = ""; tr.q = ""; tr.sort = "status"; tr.dir = ""; tr.open.clear(); tr.items = [];
+  tr.opener = document.activeElement; tr.region = opts.region !== undefined ? opts.region : region; tr.status = opts.status || "all"; tr.type = ""; tr.q = ""; tr.sort = "status"; tr.dir = ""; tr.open.clear(); tr.items = [];
   $("#tr-q").value = "";
   $("#tr-region").innerHTML = '<option value="">All UK</option>' + (ME.regions || []).map((r) => `<option value="${esc(r)}">${esc(r === "Unplaced" ? "Region unknown" : r)}</option>`).join("");
   $("#tr-region").value = tr.region;
@@ -1229,7 +1292,7 @@ function trOpen() {
   $("#tr-q").focus({ preventScroll: true });
 }
 function closeTr() { trdlg.hidden = true; if (tr.opener && document.contains(tr.opener)) tr.opener.focus({ preventScroll: true }); tr.opener = null; }
-$("#lb-review").addEventListener("click", trOpen);
+$("#lb-review").addEventListener("click", () => trOpen());
 $("#tr-close").addEventListener("click", closeTr);
 trdlg.addEventListener("click", (e) => { if (e.target === trdlg) closeTr(); });
 $("#tr-q").addEventListener("input", debounce(() => { tr.q = $("#tr-q").value.trim(); trLoad(false); }, 300));
@@ -1253,7 +1316,7 @@ $("#tr-rows").addEventListener("click", async (e) => {
     try {
       const v = await fetchVictim(title);
       if (!v) { toast("That breach is no longer on the dashboard."); return; }
-      if (act.dataset.tr === "open") openVictim(v); else openFlag(v);
+      if (act.dataset.tr === "open") { setPaneList(tr.items.map((y) => y.title), v.post_title); openVictim(v); } else openFlag(v);
     } catch (err) { toast("Could not load the breach: " + err.message); }
     return;
   }
@@ -1308,7 +1371,7 @@ function openBreachForm(item) {
   $("#ab-title-in").value = item ? item.title : ""; $("#ab-rocu").value = item ? item.rocu : (region && region !== "Unplaced" ? region : "");
   $("#ab-date").value = item ? item.date : today(); $("#ab-date").max = today();
   for (const [k, sel] of AB_FIELDS) $(sel).value = item ? item[k] || "" : "";
-  $("#ab-msg").textContent = ""; abdlg.hidden = false; $("#ab-title-in").focus();
+  $("#ab-msg").textContent = ""; $("#ab-similar").hidden = true; abdlg.hidden = false; $("#ab-title-in").focus();
 }
 function closeBreachForm() { abdlg.hidden = true; if (abOpener && document.contains(abOpener)) abOpener.focus({ preventScroll: true }); abOpener = null; }
 $("#add-breach").addEventListener("click", () => openBreachForm(null));
@@ -1333,6 +1396,15 @@ $("#abform").addEventListener("submit", (e) => {
     } catch (err) { msg.textContent = err.message; }
   });
 });
+$("#ab-title-in").addEventListener("input", debounce(async () => {
+  const box = $("#ab-similar"), q = $("#ab-title-in").value.trim();
+  if (abEdit || q.length < 3) { box.hidden = true; return; }
+  try {
+    const d = await api(`/api/search?${new URLSearchParams({ q })}`), hits = d.breaches.items.slice(0, 3).map((x) => x.title);
+    box.hidden = !hits.length;
+    if (hits.length) box.textContent = `Already on the dashboard: ${hits.join(", ")}. Check it is not the same breach.`;
+  } catch (e) { box.hidden = true; }
+}, 350));
 $("#ab-del").addEventListener("click", async () => {
   if (!abEdit || !confirm(`Delete “${abEdit.title}”? Its flags and tasks are deleted with it.`)) return;
   try { await api(`/api/admin/breaches/${abEdit.id}`, { method: "DELETE" }); toast("Breach deleted"); closeBreachForm(); loadManualBreaches(); loadTicker(); loadLive(); refreshCurrent(); }
@@ -1346,6 +1418,7 @@ async function loadManualBreaches() {
       <button type="button" class="more" data-mb="${x.id}">Edit</button></div>`).join("") : '<p class="hint" style="margin:0">None yet. Use the + beside Overview to add one.</p>';
   } catch (e) { $("#mb-list").innerHTML = `<p class="hint">${esc(e.message)}</p>`; }
 }
+document.querySelector(".set-nav").addEventListener("click", (e) => { const b = e.target.closest("[data-jump]"); if (b) document.getElementById(b.dataset.jump).scrollIntoView({ behavior: "smooth", block: "start" }); });
 $("#mb-list").addEventListener("click", (e) => { const b = e.target.closest("[data-mb]"); if (b) openBreachForm(MB.find((x) => String(x.id) === b.dataset.mb)); });
 // ------------------------------------------------------------------ email alerts (Settings): per-group regions, the master switch, a test, the log
 let EA = null;
@@ -1360,15 +1433,15 @@ function renderEaHead() {
     ? "Alerts are on. They go out after the dashboard reads its feeds (when someone opens it and the data is over 30 minutes old, or someone presses Refresh), not on a timer. Nothing already on the dashboard is sent when a group is switched on."
     : "Alerts are off: nothing is sent, whatever the groups below say.";
   $("#ea-test").disabled = !d.configured;
-  $("#ea-log").innerHTML = d.log.length ? d.log.map((r) => `<div class="ea-lr" role="listitem"><div class="ea-lh"><span class="meta">${esc(fmtTime(r.ts))}</span>${r.ok ? '<span class="badge on">sent</span>' : '<span class="badge off">problem</span>'}${r.kind === "test" ? "" : `<span class="meta">${r.to_count} ${r.to_count === 1 ? "person" : "people"}</span>`}</div>
-      <div class="ea-lw">${r.kind === "test" ? "Test email" : esc(r.group_name || "Alert")}</div><div class="meta ea-ls">${esc(r.subject)}</div>${r.detail ? `<div class="meta ea-ls">${esc(r.detail)}</div>` : ""}</div>`).join("") : '<p class="hint" style="margin:0">Nothing sent yet.</p>';
+  $("#ea-log").innerHTML = d.log.length ? d.log.map((r) => `<li class="ea-lr"><div class="ea-lh"><span class="meta">${esc(fmtTime(r.ts))}</span>${r.ok ? '<span class="badge on">sent</span>' : '<span class="badge off">problem</span>'}${r.kind === "test" ? "" : `<span class="meta">${r.to_count} ${r.to_count === 1 ? "person" : "people"}</span>`}</div>
+      <div class="ea-lw">${r.kind === "test" ? "Test email" : esc(r.group_name || "Alert")}</div><div class="meta ea-ls">${esc(r.subject)}</div>${r.detail ? `<div class="meta ea-ls">${esc(r.detail)}</div>` : ""}</li>`).join("") : '<li class="hint" style="margin:0">Nothing sent yet.</li>';
 }
 function renderEaGroups() {
   const d = EA, box = $("#ea-groups");
   box.innerHTML = d.groups.length ? d.groups.map((g) => {
     const warn = g.enabled && !g.recipients;
     const who = g.members ? `${g.recipients} of ${g.members} ${g.members === 1 ? "member" : "members"} can be emailed.` : "Nobody is in this group yet (add people from the Users tab).";
-    return `<div class="ea-g" data-g="${g.id}"><div class="ea-gh"><strong>${esc(g.name)}</strong><label class="chk"><input type="checkbox" class="ea-on" ${g.enabled ? "checked" : ""}> Email this group about new breaches</label></div>
+    return `<div class="ea-g" data-g="${g.id}"><div class="ea-gh"><strong>${esc(g.name)}</strong><button type="button" class="more small" data-ea="members" title="See who is in this group">Members&hellip;</button><label class="chk"><input type="checkbox" class="ea-on" ${g.enabled ? "checked" : ""}> Email this group about new breaches</label></div>
       <fieldset class="ea-regions"><legend>Regions to watch</legend><div class="ea-grid">${d.regions.map((r) => `<label class="chk"><input type="checkbox" class="ea-reg" value="${esc(r)}" ${g.regions.includes(r) ? "checked" : ""}> ${esc(r)}</label>`).join("")}</div>
         <div class="ea-quick"><button type="button" class="more small" data-ea="all">All regions</button><button type="button" class="more small" data-ea="none">None</button></div></fieldset>
       <label class="chk"><input type="checkbox" class="ea-unp" ${g.include_unplaced ? "checked" : ""}> Also breaches whose region is not known yet</label>
@@ -1390,6 +1463,7 @@ $("#ea-groups").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-ea]");
   if (!b) return;
   const card = b.closest(".ea-g");
+  if (b.dataset.ea === "members") { uf.group = card.dataset.g; showTab("users", true); return; }
   if (b.dataset.ea === "all" || b.dataset.ea === "none") { card.querySelectorAll(".ea-reg").forEach((c) => { c.checked = b.dataset.ea === "all"; }); return; }
   const out = card.querySelector(".ea-saved"), g = EA.groups.find((x) => String(x.id) === card.dataset.g);
   const body = { enabled: card.querySelector(".ea-on").checked, regions: [...card.querySelectorAll(".ea-reg:checked")].map((c) => c.value), include_unplaced: card.querySelector(".ea-unp").checked };
@@ -1489,6 +1563,7 @@ $("#g-list").addEventListener("click", (e) => {
   if (!g) return;
   if (b.dataset.act === "gmembers") membersDialog(g);
   else if (b.dataset.act === "grename") renameDialog(g);
+  else if (b.dataset.act === "galerts") { showTab("settings", true); setTimeout(() => { const c = document.querySelector(`#ea-groups .ea-g[data-g="${g.id}"]`); if (c) c.scrollIntoView({ block: "center", behavior: "smooth" }); }, 700); }
   else if (b.dataset.act === "gfilter") { uf.group = String(g.id); $("#u-fgroup").value = uf.group; renderUsers(); $(".users").scrollIntoView({ behavior: "smooth", block: "start" }); }
   else if (b.dataset.act === "gdelete") {
     if (confirm(`Delete the group “${g.name}”? ${g.count ? `Its ${g.count} member${g.count === 1 ? "" : "s"} stay${g.count === 1 ? "s" : ""} on the dashboard; they are just taken out of the group.` : "It has no members."}`))
@@ -1940,7 +2015,9 @@ gs.input.addEventListener("input", () => {
   if (q.length >= 2) gsLog(q);
   gsRun();
 });
+let restoringFocus = false;                 // set while a closed dialog hands the focus back: that must not re-open the result list
 gs.input.addEventListener("focus", () => {
+  if (restoringFocus) return;
   const q = gs.input.value.trim();
   if (q.length >= 2 && gs.data && gs.data.q === q) gsRender(gs.data);
   else if (q.length >= 2) gsRun();                  // the list opens when the results arrive
@@ -1974,12 +2051,13 @@ const gsFocus = () => { if (window.scrollY > 0) window.scrollTo(0, 0); gs.input.
 
 // keyboard: "/" jumps to the search box of the current tab (or the top-bar search), Ctrl/Cmd+K to the top-bar search from anywhere, Esc closes dialogs
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { if (!abdlg.hidden) closeBreachForm(); else if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!trdlg.hidden) closeTr(); else if (!modal.hidden) closeModal(); return; }
+  if (e.key === "Escape") { if (!helpdlg.hidden) closeHelp(); else if (!abdlg.hidden) closeBreachForm(); else if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!trdlg.hidden) closeTr(); else if (!modal.hidden) closeModal(); return; }
   if (!obEl.hidden) return;
-  if ((e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) { e.preventDefault(); gsFocus(); return; }
+  if ((e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) { e.preventDefault(); if (leavePane()) gsFocus(); return; }
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
   const box = { victims: "#vq", news: "#nq", gangs: "#gq", alerts: "#aq", activity: "#act-q" }[activeTab()];
   e.preventDefault();
+  if (!leavePane()) return;
   if (box) $(box).focus(); else gsFocus();
 });
 
@@ -2028,15 +2106,15 @@ async function waitForRefresh() {
 // Region lookups run on the server after an open or Refresh. While that one job runs we re-read the screen every
 // 20s, then stop. No polling otherwise.
 let tracking = false;
-async function trackPlacing() {
+async function trackPlacing(force) {
   if (tracking) return;
   tracking = true;
   try {
     await new Promise((res) => setTimeout(res, 2000));
     for (let i = 0; i < 60; i++) {
       const h = await loadHealth();
-      if (["overview", "victims"].includes(activeTab())) refreshCurrent();
-      loadTicker();
+      if (h.placing || force || i > 0) { if (["overview", "victims"].includes(activeTab())) refreshCurrent(); loadTicker(); }        // nothing is re-read unless something is happening
+      force = false;
       if (!h.placing) break;
       await new Promise((res) => setTimeout(res, 20000));
     }
@@ -2048,9 +2126,76 @@ $("#refresh-now").addEventListener("click", async () => {
   try { await api("/api/refresh", { method: "POST" }); } catch (err) { toast(err.message || "Refresh failed"); }
   await waitForRefresh();
   btn.disabled = false; btn.classList.remove("spinning");
-  refreshCurrent(); loadTicker(); trackPlacing();
+  refreshCurrent(); loadTicker(); trackPlacing(true);
 });
 
+// ------------------------------------------------------------------ modal layers: only the top one can be used; the page (and any layer under it) is inert and does not scroll; focus goes back afterwards
+const LAYER_IDS = ["onboard", "pwreq", "helpdlg", "fdlg", "abdlg", "drawer", "trdlg", "modal"];          // top to bottom
+const layerEl = (id) => document.getElementById(id);
+const layerOf = (el) => (el ? LAYER_IDS.find((id) => layerEl(id) && layerEl(id).contains(el)) : undefined);
+let lastOutside = null, wasOpen = [];
+const openers = {}, lastInside = {};
+document.addEventListener("focusin", (e) => { const id = layerOf(e.target); if (id) lastInside[id] = e.target; else if (!e.target.closest("#toast, #drawer-backdrop")) lastOutside = e.target; });
+function firstFocusable(el) { return [...el.querySelectorAll('input:not([type=hidden]), select, textarea, button, [href], [tabindex="0"]')].find((x) => !x.disabled && !x.closest("[hidden]") && x.getClientRects().length); }
+function syncLayers() {
+  const open = LAYER_IDS.filter((id) => layerEl(id) && !layerEl(id).hidden), top = open[0];
+  LAYER_IDS.forEach((id) => { const el = layerEl(id); if (el) el.inert = !!top && id !== top; });
+  const bd = $("#drawer-backdrop"); if (bd) bd.inert = top !== "drawer";
+  document.querySelectorAll(".topbar, .navrow, .filterbar, main, .foot").forEach((el) => { el.inert = open.length > 0; });
+  document.body.classList.toggle("modal-open", open.length > 0);
+  const before = wasOpen[0];
+  for (const id of open) if (!wasOpen.includes(id)) {
+    openers[id] = wasOpen.length ? lastInside[before] : lastOutside;
+    const el = layerEl(id);
+    if (!el.contains(document.activeElement)) { const f = firstFocusable(el); if (f) f.focus({ preventScroll: true }); }
+  }
+  for (const id of wasOpen) if (!open.includes(id)) {
+    const back = openers[id]; delete openers[id];
+    const now = document.activeElement;
+    const typing = back && back.matches("input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea") && matchMedia("(pointer: coarse)").matches;      // a touch screen would raise its keyboard
+    if (back && !typing && document.contains(back) && !back.closest("[inert]") && (!now || now === document.body || now.closest("[inert], [hidden]") || !document.contains(now))) { restoringFocus = true; back.focus({ preventScroll: true }); restoringFocus = false; }
+  }
+  wasOpen = open;
+  setTitle();
+}
+// the shortcuts that jump to a search box: with a breach pane open (and nothing else) they close the pane first, because the page behind it cannot be used until it is shut
+function leavePane() {
+  const open = LAYER_IDS.filter((id) => layerEl(id) && !layerEl(id).hidden);
+  if (open.length === 1 && open[0] === "drawer") { closeDrawer(); syncLayers(); return true; }
+  return open.length === 0;
+}
+const layerWatch = new MutationObserver(syncLayers);
+LAYER_IDS.concat(["drawer-backdrop"]).forEach((id) => { const el = layerEl(id); if (el) layerWatch.observe(el, { attributes: true, attributeFilter: ["hidden"] }); });
+syncLayers();
+// ---- keyboard shortcuts
+const helpdlg = $("#helpdlg");
+const openHelp = () => { helpdlg.hidden = false; };
+const closeHelp = () => { helpdlg.hidden = true; };
+$("#help-close").addEventListener("click", closeHelp);
+helpdlg.addEventListener("click", (e) => { if (e.target === helpdlg) closeHelp(); });
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || !obEl.hidden || /^(input|textarea|select)$/i.test(e.target.tagName) || e.target.isContentEditable) return;
+  const dialogOpen = ["#fdlg", "#abdlg", "#helpdlg", "#trdlg", "#modal"].some((s) => !document.querySelector(s).hidden);
+  if (e.key === "?") { e.preventDefault(); openHelp(); return; }
+  if (!drawer.hidden && !dialogOpen) { if (e.key === "j" || e.key === "]") { e.preventDefault(); paneStep(1); } else if (e.key === "k" || e.key === "[") { e.preventDefault(); paneStep(-1); } return; }
+  if (e.key === "n" && ME && ME.database && !document.body.classList.contains("modal-open")) { e.preventDefault(); openBreachForm(null); }
+});
+// ---- on a phone the long Overview sections fold away (a button on each heading opens them; the choice is remembered)
+function foldSections() {
+  ["card-region", "card-year", "card-gang", "card-sector"].forEach((id) => {
+    const card = document.getElementById(id), head = card && card.querySelector(".card-head");
+    if (!head || head.querySelector(".fold-btn")) return;
+    const key = `evileye-fold-${id}`, title = head.querySelector("h3").textContent;
+    let folded = true; try { const s = localStorage.getItem(key); if (s !== null) folded = s === "1"; } catch (e) { /* default */ }
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "fold-btn";
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+    const apply = () => { card.classList.toggle("folded", folded); btn.setAttribute("aria-expanded", String(!folded)); btn.setAttribute("aria-label", `${folded ? "Show" : "Hide"} ${title}`); };
+    btn.addEventListener("click", () => { folded = !folded; try { localStorage.setItem(key, folded ? "1" : "0"); } catch (e) { /* ignore */ } apply(); });
+    head.appendChild(btn); apply();
+  });
+}
+foldSections();
 async function openFromLink() {                // a link in an alert email is /?open=<breach name>
   const want = new URLSearchParams(location.search).get("open");
   if (!want) return;
@@ -2065,6 +2210,7 @@ async function init() {
   if (ME.database) { loadMarkerTypes(); $("#add-breach").hidden = false; }
   if (ME.theme && ME.theme !== curTheme()) setTheme(ME.theme);      // the look chosen on the account wins over this browser's last setting
   if (ME.must_change) { showPwReq(); return; }        // nothing else works until the password has been changed
+  try { const back = sessionStorage.getItem("evileye-return"); if (back && !location.hash) location.hash = back; sessionStorage.removeItem("evileye-return"); } catch (e) { /* ignore */ }
   const h = readHash();
   region = ME.region || "";
   if (h.region && ME.regions.includes(h.region)) region = h.region;        // a shared link filters the view without changing your saved region
@@ -2072,6 +2218,11 @@ async function init() {
   if (!ME.onboarded) startOnboarding();
   if (ME.role === "admin" && ME.database) document.querySelectorAll(".admin-only").forEach((el) => { el.hidden = false; });
   tabFade();
+  document.querySelectorAll(".panel").forEach((p) => {            // every page starts with a heading, and a table that scrolls can be reached by keyboard
+    if (!p.querySelector("h2")) { const tb = document.querySelector(`.tab[data-tab="${p.id.slice(4)}"]`), h = document.createElement("h2"); h.className = "sr-only"; h.textContent = tb ? tb.textContent.trim() : p.id.slice(4); p.prepend(h); }
+    p.querySelectorAll(".table-wrap").forEach((w) => { w.tabIndex = 0; w.setAttribute("role", "region"); w.setAttribute("aria-label", `${p.id.slice(4)} table`); });
+  });
+  setTitle();
   $("#usermenu").title = `Account: ${ME.username}`;
   // record this visit first so "new since your last visit" is measured against the previous one
   let refreshing = false;
@@ -2079,8 +2230,7 @@ async function init() {
   openFromLink();
   if (h.tab && document.querySelector(`.tab[data-tab="${h.tab}"]`) && h.tab !== "overview") { showTab(h.tab, false); track("tab_view", `${h.tab} (shared link)`); } else { updateFilterBar(); syncHash(); loadOverview(); }
   loadHealth(); loadTicker();
-  if (refreshing) await waitForRefresh();
-  await loadHealth();
-  refreshCurrent(); loadTicker(); trackPlacing();
+  if (refreshing) { await waitForRefresh(); await loadHealth(); refreshCurrent(); loadTicker(); }       // only when the data has just changed
+  trackPlacing(refreshing);
 }
 init();

@@ -6,8 +6,13 @@
   <title>EvilEye</title>
   <link id="favicon" rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <meta name="theme-color" content="#151b26">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="EvilEye">
   <script src="/static/theme-init.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=103">
+  <link rel="stylesheet" href="/static/style.css?v=111">
 </head>
 <body>
   <header class="topbar">
@@ -75,10 +80,10 @@
     <section id="tab-overview" class="panel active">
       <div id="newbar" class="newbar" hidden></div>
       <section id="livebar" class="card livebar" hidden aria-label="Live tasks">
-        <div class="lb-head"><h3>Live tasks <span id="lb-count" class="lb-n"></span></h3>
-          <span class="lb-ctl"><label class="chk lb-only" id="lb-only-wrap" hidden><input type="checkbox" id="lb-only"> <span>Only <span id="lb-region"></span></span></label>
+        <div class="lb-head"><h3>Live tasks <span id="lb-count" class="lb-n"></span></h3><span id="lb-attn" class="lb-attn"></span>
+          <span class="lb-ctl"><label class="chk lb-mine" id="lb-mine-wrap"><input type="checkbox" id="lb-mine"> <span>Mine</span></label><label class="chk lb-only" id="lb-only-wrap" hidden><input type="checkbox" id="lb-only"> <span>Only <span id="lb-region"></span></span></label>
             <button type="button" class="more small" id="lb-review" aria-haspopup="dialog">Review all tasks</button></span></div>
-        <div id="lb-list" class="lb-list" role="list"></div>
+        <ul id="lb-list" class="lb-list"></ul>
         <div class="lb-foot"><span class="lb-keywrap"><button type="button" class="more small" id="lb-legend" aria-expanded="false" aria-controls="lb-key" title="What the markings mean">Key</button>
           <div id="lb-key" class="lb-key" role="note" hidden></div></span></div>
       </section>
@@ -125,9 +130,9 @@
     <section id="tab-victims" class="panel">
       <div class="toolbar">
         <input id="vq" class="search" type="search" placeholder="Search victim, town, website, group&hellip; (press /)">
-        <select id="vgroup" class="search"><option value="">All groups</option></select>
-        <select id="vsector" class="search"><option value="">All sectors</option></select>
-        <select id="vmark" class="search" aria-label="Show" hidden><option value="">All victims</option><option value="alloc">Allocated</option><option value="mine">Allocated to me</option><option value="flagged">False positives</option></select>
+        <select id="vgroup" class="search" aria-label="Filter by gang"><option value="">All groups</option></select>
+        <select id="vsector" class="search" aria-label="Filter by sector"><option value="">All sectors</option></select>
+        <select id="vmark" class="search" aria-label="Show" hidden><option value="">All victims</option><option value="unplaced">Needs a region</option><option value="alloc">Allocated</option><option value="mine">Allocated to me</option><option value="flagged">False positives</option></select>
         <label class="chk" id="vnew-wrap" hidden><input type="checkbox" id="vnew"> <span id="vnew-label">New since your last visit</span></label>
         <button id="vrefresh" class="btn">Refresh</button>
         <a id="vcsv" class="more" href="/api/victims.csv" title="Download the current list as CSV">Export CSV</a>
@@ -141,7 +146,7 @@
             <th class="sortable" data-sort="sector">Sector <span class="arrow"></span></th>
             <th class="sortable" data-sort="seen">First seen <span class="arrow"></span></th>
             <th class="sortable" data-sort="region">Region <span class="arrow"></span></th>
-            <th class="r" aria-label="Flag or allocate"></th>
+            <th class="r"><span class="sr-only">Flag or allocate</span></th>
           </tr></thead>
           <tbody id="victim-rows"></tbody>
         </table>
@@ -156,7 +161,7 @@
           <p class="hint">Breach and leak claims, ransomware and underground activity from <a href="https://darkwebinformer.com" target="_blank" rel="noopener noreferrer">Dark Web Informer</a> and the security press. X blocks automated access, so Dark Web Informer is read from its own site feed. <a href="https://x.com/DarkWebInformer" target="_blank" rel="noopener noreferrer">@DarkWebInformer on X</a>.</p>
         </div>
         <label class="field">Summary period
-          <select id="nperiod" class="search"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option></select>
+          <select id="nperiod" class="search" aria-label="Time period"><option value="7">Last 7 days</option><option value="14">Last 14 days</option><option value="30">Last 30 days</option></select>
         </label>
       </div>
       <div class="card brief" id="brief">
@@ -184,8 +189,8 @@
       </div>
       <div class="toolbar">
         <input id="nq" class="search" type="search" placeholder="Search dark web news&hellip; (press /)">
-        <select id="nsource" class="search"><option value="">All sources</option></select>
-        <select id="ntheme" class="search"><option value="">All themes</option></select>
+        <select id="nsource" class="search" aria-label="Filter by source"><option value="">All sources</option></select>
+        <select id="ntheme" class="search" aria-label="Filter by theme"><option value="">All themes</option></select>
         <div class="radio-group" role="radiogroup" aria-label="UK filter">
           <label><input type="radio" name="nuk" value="" checked> All</label>
           <label><input type="radio" name="nuk" value="1"> Mentions UK</label>
@@ -202,7 +207,7 @@
     <section id="tab-gangs" class="panel">
       <div class="toolbar">
         <input id="gq" class="search" type="search" placeholder="Search gangs &amp; sources&hellip; (press /)">
-        <select id="gsource" class="search">
+        <select id="gsource" class="search" aria-label="Filter by source">
           <option value="">All sources</option>
           <option value="ransomware.live">ransomware.live</option>
           <option value="deepdarkcti">deepdarkCTI</option>
@@ -225,7 +230,7 @@
     <section id="tab-alerts" class="panel">
       <div class="toolbar">
         <input id="aq" class="search" type="search" placeholder="Search alerts, CVEs&hellip; (press /)">
-        <select id="asource" class="search">
+        <select id="asource" class="search" aria-label="Filter by source">
           <option value="">All sources</option>
           <option value="ncsc">NCSC</option>
           <option value="cisa">CISA KEV</option>
@@ -281,6 +286,7 @@
     </section>
 
     <section id="tab-settings" class="panel">
+      <nav class="set-nav" aria-label="Settings sections"><button type="button" class="more" data-jump="mk-card">Markers</button><button type="button" class="more" data-jump="mb-card">Manual breaches</button><button type="button" class="more" data-jump="ea-card">Email alerts</button></nav>
       <div class="card" id="mk-card">
         <div class="card-head"><h3>Markers</h3><span class="meta">Task is built in. Add your own, give each a colour, and use them from the Flag or allocate dialog.</span></div>
         <form id="mkform" class="mkform" autocomplete="off">
@@ -307,14 +313,14 @@
         <div id="ea-groups" class="ea-groups"></div>
         <div class="fd-row"><button type="button" class="more" id="ea-test">Send me a test email</button><span class="hint" id="ea-test-msg" role="status"></span></div>
         <h3 class="sub" style="margin-top:20px">Recent sends</h3>
-        <div id="ea-log" class="ea-log" role="list"></div>
+        <ul id="ea-log" class="ea-log"></ul>
       </div>
     </section>
 
     <section id="tab-activity" class="panel">
       <div class="toolbar">
-        <select id="act-user" class="search"><option value="">All users</option></select>
-        <select id="act-event" class="search"><option value="">All events</option></select>
+        <select id="act-user" class="search" aria-label="Filter by user"><option value="">All users</option></select>
+        <select id="act-event" class="search" aria-label="Filter by event"><option value="">All events</option></select>
         <input id="act-q" class="search" type="search" placeholder="Search detail&hellip;">
         <button id="act-refresh" class="btn">Refresh</button>
         <a id="act-csv" class="more" href="/api/admin/activity.csv">Export CSV</a>
@@ -353,12 +359,26 @@
     </div>
   </div>
 
+  <div id="helpdlg" class="modal fdlg helpdlg" hidden>
+    <div class="modal-card fd-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <div class="card-head"><h3 id="help-title">Keyboard shortcuts</h3><div class="modal-actions"><button id="help-close" class="more" type="button">Close</button></div></div>
+      <dl class="keys">
+        <div><dt><kbd>/</kbd></dt><dd>Search the page you are on</dd></div>
+        <div><dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Search everything</dd></div>
+        <div><dt><kbd>n</kbd></dt><dd>Add a breach</dd></div>
+        <div><dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>Next or previous breach, with a breach open</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>This list</dd></div>
+        <div><dt><kbd>Esc</kbd></dt><dd>Close what is open</dd></div>
+      </dl>
+    </div>
+  </div>
   <div id="abdlg" class="modal fdlg" hidden>
     <div class="modal-card fd-card ab-card" role="dialog" aria-modal="true" aria-labelledby="ab-title">
       <div class="card-head"><h3 id="ab-title">Add a breach</h3><div class="modal-actions"><button id="ab-close" class="more" type="button">Close</button></div></div>
       <p class="hint">Only the name, region and date are needed. Everything else is optional.</p>
       <form id="abform" class="ab-form" autocomplete="off" novalidate>
         <label class="field">Name <span class="req">required</span><input id="ab-title-in" class="search" maxlength="200" required></label>
+        <div id="ab-similar" class="hint ab-similar" aria-live="polite" hidden></div>
         <div class="ab-two">
           <label class="field">Region <span class="req">required</span><select id="ab-rocu" class="search" required></select></label>
           <label class="field">Date <span class="req">required</span><input id="ab-date" type="date" class="search" required></label>
@@ -404,13 +424,17 @@
     </div>
   </div>
   <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
-  <aside id="drawer" class="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="dr-title">
+  <div id="drawer" class="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="dr-title">
     <div class="drawer-head">
       <h2 id="dr-title"></h2>
-      <button id="dr-close" class="more icon-btn" type="button" aria-label="Close details">&times;</button>
+      <div class="dr-tools">
+        <span id="dr-nav" class="dr-nav" hidden><button id="dr-prev" class="more icon-btn" type="button" aria-label="Previous breach (k)" title="Previous breach (k)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button><span id="dr-pos" class="meta" aria-live="polite"></span><button id="dr-next" class="more icon-btn" type="button" aria-label="Next breach (j)" title="Next breach (j)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></button></span>
+        <button id="dr-link" class="more icon-btn" type="button" aria-label="Copy a link to this breach" title="Copy a link to this breach"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.43"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"/></svg></button>
+        <button id="dr-close" class="more icon-btn" type="button" aria-label="Close details">&times;</button>
+      </div>
     </div>
     <div id="dr-body" class="drawer-body"></div>
-  </aside>
+  </div>
   <div id="pwreq" class="onboard" hidden role="dialog" aria-modal="true" aria-labelledby="pr-title">
     <div class="ob-card pr-card">
       <img class="ob-mark" src="/static/mark-off.png" width="76" height="86" alt="">
@@ -474,6 +498,6 @@
       <div class="ob-dots" aria-hidden="true"><i id="ob-dot1" class="on"></i><i id="ob-dot2"></i><i id="ob-dot3"></i><i id="ob-dot4"></i></div>
     </div>
   </div>
-  <script src="/static/app.js?v=92"></script>
+  <script src="/static/app.js?v=94"></script>
 </body>
 </html>

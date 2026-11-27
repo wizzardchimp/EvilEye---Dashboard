@@ -840,6 +840,12 @@ def security_headers(resp):
         h.setdefault("Content-Security-Policy-Report-Only" if CSP_MODE == "report-only" else "Content-Security-Policy", CSP)
     if not request.path.startswith("/static/"):
         h.setdefault("Cache-Control", "no-store")                        # pages and data are never kept by the browser or a proxy
+    elif request.path.endswith(".html"):
+        h["Cache-Control"] = "no-store"
+    elif request.args.get("v"):
+        h["Cache-Control"] = "public, max-age=31536000, immutable"       # a versioned file never changes under its address (the version is its content's hash)
+    else:
+        h["Cache-Control"] = "public, max-age=3600"
     return resp
 
 
@@ -889,7 +895,7 @@ def _open_param(raw):
 
 @app.get("/login")
 def login_page():
-    page = (BASE / "login.html").read_text()
+    page = _versioned((BASE / "login.html").read_text())
     want = _open_param(request.args.get("open"))
     page = page.replace("<!--open-->", f'<input type="hidden" name="open" value="{htmllib.escape(want, quote=True)}">' if want else "")
     return page, 200, {"Content-Type": "text/html; charset=utf-8"}
@@ -946,10 +952,31 @@ def healthz():
     return "ok"
 
 
+_ASSET_HASH = {}
+
+
+def _asset_hash(name):
+    """A short hash of a static file's content: used as its ?v= so the browser may keep it for a year, and a changed file is fetched at once."""
+    f = BASE / "static" / name
+    try:
+        st = f.stat()
+    except OSError:
+        return "0"
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _ASSET_HASH.get(name)
+    if not hit or hit[0] != stamp:
+        hit = _ASSET_HASH[name] = (stamp, hashlib.sha256(f.read_bytes()).hexdigest()[:10])
+    return hit[1]
+
+
+def _versioned(html):
+    return re.sub(r"(/static/([\w.-]+))\?v=\w+", lambda m: f"{m.group(1)}?v={_asset_hash(m.group(2))}", html)
+
+
 @app.get("/")
 def index():
-    resp = send_from_directory(BASE / "static", "index.html")
-    resp.headers["Cache-Control"] = "no-store"                           # Flask's own default is "no-cache", which still lets a copy be kept
+    resp = Response(_versioned((BASE / "static" / "index.html").read_text()), mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store"                           # the page itself is never kept; the files it names are, by content hash
     return resp
 
 
@@ -2176,6 +2203,7 @@ def api_markers_live():
     return jsonify(total=len(items), items=items[:100], ever=sum(len(ms) for ms in MARKERS.values()))
 
 
+STALE_TASK_DAYS = 3                      # a task not started after this many days is "waiting too long"
 HISTORY_SORTS = ("status", "title", "marker", "who", "allocated", "started", "completed", "took")
 
 
@@ -2207,17 +2235,20 @@ def api_markers_history():
             a, s, c = m["allocated_at"], m["started_at"], m["completed_at"]
             secs = lambda later, earlier: int((later - earlier).total_seconds()) if later and earlier else None
             x["to_start_s"], x["working_s"], x["to_finish_s"] = secs(s, a), secs(c, s), secs(c, a)
+            x["stale"] = not s and not c and (now - a).total_seconds() >= STALE_TASK_DAYS * 86400
             x["to_allocate_s"] = secs(a, m.get("marked_at")) if m["initials"] and secs(a, m.get("marked_at")) else None       # how long a Task waited for somebody to take it
             x["took_s"] = x["to_finish_s"] if c else secs(now, a)          # a finished task: allocation to completion; a live one: how long so far
             rows.append(x)
     counts = {"all": len(rows), "live": sum(1 for x in rows if x["status"] != "completed"), "unallocated": sum(1 for x in rows if x["status"] == "unallocated"),
-              "waiting": sum(1 for x in rows if x["status"] == "allocated"), "started": sum(1 for x in rows if x["status"] == "started"),
+              "stale": sum(1 for x in rows if x["stale"]), "waiting": sum(1 for x in rows if x["status"] == "allocated"), "started": sum(1 for x in rows if x["status"] == "started"),
               "completed": sum(1 for x in rows if x["status"] == "completed")}
     mean = lambda xs: int(sum(xs) / len(xs)) if xs else None
     avg = {"to_start_s": mean([x["to_start_s"] for x in rows if x["to_start_s"] is not None and x["status"] == "completed"]),
            "to_finish_s": mean([x["to_finish_s"] for x in rows if x["to_finish_s"] is not None])}
     if status == "live":
         rows = [x for x in rows if x["status"] != "completed"]
+    elif status == "stale":
+        rows = [x for x in rows if x["stale"]]
     elif status in ("unallocated", "waiting", "started", "completed"):
         rows = [x for x in rows if x["status"] == {"waiting": "allocated"}.get(status, status)]
     if sort == "status":                  # what needs attention first: in progress (latest start first), nobody yet, waiting (longest first), then finished (latest first)
@@ -2561,7 +2592,9 @@ def _filter_victims():
         items = [v for v in STATE["victims"] if v.get("flag") and (not r or r in (v["rocu"], v["flag"]["region"]))]
     else:
         items = _uk()
-    if mark == "alloc":
+    if mark == "unplaced":                   # breaches with no region yet, whatever region is chosen
+        items = [v for v in STATE["victims"] if v["rocu"] == "Unplaced"]
+    elif mark == "alloc":
         items = [v for v in items if _live_markers(v["key"])]
     elif mark == "mine":
         u = current_user()

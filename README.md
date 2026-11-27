@@ -38,7 +38,8 @@ classification; victims it has not classified are reported separately as Unclass
 company with its town or district in brackets, sorts by any column, pages 50 at a time and exports to CSV (respecting the
 region filter). Click a row, or any entry in the Overview "Latest" lists, for the breach details (see below). "New" badges mark victims first seen since your previous visit (a visit starts when
 you open the page more than 30 minutes after the last one). The filter box matches the same way the search box does (below), so
-"wine", "west midlands" or a website all work, and every word you type must be found.
+"wine", "west midlands" or a website all work, and every word you type must be found. The **Show** menu has **Needs a region**: the breaches that could not be placed
+(no postcode, place name or register match), whatever region is chosen, so they can be sorted out by hand. In the tables and lists an unplaced breach shows a quiet dash with a tooltip rather than a loud badge.
 
 ## Search
 The search box sits at the **right-hand end of the tab bar** on a desktop (1100px and wider; its list drops down lined up with the box's
@@ -80,8 +81,13 @@ and `--fs` is 1 normally and 1.15 under 640px. Wider screens are unchanged. Grid
   an ellipsis before the button ever is, and the word "Showing" is dropped under 480px.
 - **Chosen region first:** when a region is chosen and the two Overview lists are stacked, "Latest in <region>" is above "Latest UK
   incidents". Side by side (wide screens) the order is unchanged.
-- **Counts** are a 2 x 2 grid, and the **region tiles** are two columns of identical, compact tiles (the share sits beside the number,
+- **Counts** are a compact two-column grid (three counts with no region chosen, four with one; an odd one out takes the whole row), and the **region tiles** are two columns of identical, compact tiles (the share sits beside the number,
   and "of UK" is dropped under 420px) so names of one or two lines no longer push their numbers out of line.
+- **Long sections fold.** Regions, Year, Gangs and Sectors on the Overview start folded on a phone, each with a chevron button on its heading (the choice is remembered per browser). That takes about 1,700px off the page
+  (the live tasks and the latest incidents come first). Wide screens never fold.
+- **Touch targets.** On a touch screen (`pointer: coarse`) form boxes, flag buttons, the header buttons (44px, a little less on the narrowest phones) and the pane's tool buttons are at least 44px; the rest of the buttons at least 40px.
+- **Installable and themed.** The browser's address bar takes the page's colour (`theme-color`, kept in step with the light / dark choice), and a web manifest (`/static/manifest.webmanifest`, with 192 and 512px icons) lets a phone add the dashboard to its home screen.
+- **Signed out mid-visit.** If the session ends, signing in again returns you to the page you were on (a tab, a region or a breach link), not the Overview.
 
 ## Breach details
 Clicking a breach (a row in UK Victims, or anywhere on an entry in the Overview "Latest" lists (its name included) opens a details
@@ -111,12 +117,17 @@ top, and flagging or allocating a breach refreshes it in place without losing yo
   and news feeds. Mentions are matched on the whole company name and must fall within 30 days of the post, and names too short
   or generic to match safely are skipped, so a listed mention is never a guess. The leak-site address is **copy only**: it is
   never opened from the dashboard. The extras load from `GET /api/victims/context?title=...`.
-- **Region**: where it was placed and the basis (see Regions (ROCU)), then **Description** (from ransomware.live) and, for admins only, a
-  dashed **Admin: set region** card with the manual placement form.
-- **Region** (and how it was decided), the description, flags, the Task and other markers, and the admin region editor.
+- **Description** (from ransomware.live), last.
+
+The order is: **Breach details**, **Flags and tasks**, **Region**, **Company (Companies House)**, **Gang responsible**, **Where this was sourced from**, **Description**. The **Region** card sits straight after the flags because
+where a breach is placed is the thing most often questioned: it says where it was placed and the basis (see Regions (ROCU)), and for admins only it holds a folded, dashed **Set the region by hand (admin)** section with the manual placement form
+(it opens by itself for a breach that has been placed by hand).
+
+**Stepping and sharing.** A pane opened from a list (the Overview tickers, the Live tasks banner, the UK Victims table or the Task review) can be stepped through it: **Previous / Next** buttons in the pane's header with "3 of 12", or **j** / **k** (also **]** and **[**).
+A pane opened from the search box, or from a link, has no list, so no stepping. **Copy link** (the chain icon) puts an address on the clipboard, `/?open=<breach name>`, that opens this breach after sign-in.
 
 ## Adding a breach by hand
-The **+** to the left of Overview (anyone signed in) opens **Add a breach**. Only the **name, region and date** are required; gang, sector, website, town, data, ransom and a description are optional. The breach then behaves like any other: it is in the lists, regional counts, search, the Victims table and the CSV, can carry flags and tasks, and opens in the pane (marked "added by hand", with its region "chosen when it was added by hand"; an admin's manual placement still overrides it). It survives feed refreshes. A name already on the dashboard is refused. Admins see all of them in **Settings → Manual breaches** and can edit (including renaming, which keeps its flags and tasks) or delete one (its flags and tasks go with it). Stored in `manual_breaches`; `POST /api/breaches`, and for admins `GET /api/admin/breaches` and `PATCH` / `DELETE /api/admin/breaches/<id>`.
+The **+** to the left of Overview (anyone signed in; it reads **+ Add breach** on screens 1360px and wider, and the key **n** opens it too) opens **Add a breach**. While you type the name (three letters or more) the form shows up to three breaches already on the dashboard that match it, so a double entry is noticed before it is made. Only the **name, region and date** are required; gang, sector, website, town, data, ransom and a description are optional. The breach then behaves like any other: it is in the lists, regional counts, search, the Victims table and the CSV, can carry flags and tasks, and opens in the pane (marked "added by hand", with its region "chosen when it was added by hand"; an admin's manual placement still overrides it). It survives feed refreshes. A name already on the dashboard is refused. Admins see all of them in **Settings → Manual breaches** and can edit (including renaming, which keeps its flags and tasks) or delete one (its flags and tasks go with it). Stored in `manual_breaches`; `POST /api/breaches`, and for admins `GET /api/admin/breaches` and `PATCH` / `DELETE /api/admin/breaches/<id>`.
 
 ## Regions (ROCU)
 ROCUs are groupings of police forces: ROCU > force > organisation. The 43 forces of England and Wales map to 10 ROCUs;
@@ -162,7 +173,7 @@ group, sector and age on the left and the victim's area (town or district, when 
 outside links of their own. `/api/ticker?uk=N&reg=N` returns up to 1,500 per list.
 
 ## Flags, tasks and markers
-The breach pane has a **Flags and tasks** card under Breach details and above Company: any false-positive flag and every task or marker with its status, initials and dates, and a **Flag or allocate** button that opens the dialog. In the dialog the false-positive section is behind a **False positive…** button, so it only opens when you mean to deal with it.
+The breach pane has a **Flags and tasks** card under Breach details and above Region: any false-positive flag and every task or marker with its status, initials and dates, and a **Flag or allocate** button that opens the dialog. In the dialog the false-positive section is behind a **False positive…** button, so it only opens when you mean to deal with it.
 
 Every victim (in the Overview tickers, the UK Victims table and the details drawer) has a flag button. Any signed-in user can:
 
@@ -198,13 +209,15 @@ kept (and shown in the breach pane and the dialog) as the record of who did it a
 shows the live tasks as **small tiles**, three lines each: the breach; the marker, the initials and the state ("Allocated", "Unallocated" or "In progress"); and
 the place (the town, or the region and town when the banner covers more than one region) with one time, "started 2h ago" or else "allocated 6d ago" ("marked", for a
 Task nobody has taken). The full wording is in a tile's tooltip. **Completed tasks are never listed** (the page also refuses to draw one if it were ever sent).
-A **Key** button at the foot of the banner explains the markings: an allocated task shows a dash and the initials ("– JS", kept after it is completed, then with a tick), an unallocated Task has an orange border, and a finished one a dashed outline.
+**What needs attention.** The heading carries chips: **n unallocated** (Tasks nobody has taken) and **n waiting 3+ days** (allocated but not started). Pressing one opens the Task review already on that list, for the same region scope as the banner.
+A tile that has waited 3 days to be started shows its age in amber with a "!" (7 days: red), and a screen reader hears "(overdue)"; a task in progress is never aged. **Mine** (beside the heading) shows only the tasks you set or that carry your initials, with the count as "n of N".
+**Quick actions.** A tile has one button for the next step this person can take, on the tile itself: **Start** (allocated), **Done** (in progress) or **Take** (an unallocated Task; it puts your saved initials on it). Start and Done are offered only to those allowed to change the task (see below),
+and each says so in a toast with **Undo**. A **Key** button at the foot of the banner explains the markings: an allocated task shows a dash and the initials ("– JS", kept after it is completed, then with a tick), an unallocated Task has an orange border, and a finished one a dashed outline.
 **With a region chosen in the header, the banner shows every live task in that region by default** (the switch **Only <region>** is ticked; untick it to see every region;
 your choice is remembered on that browser). The tiles wrap onto as many rows as they need, so **every task is on show**: nothing scrolls sideways and nothing is hidden
 (on a phone they are a single column in the page). Work in progress comes first (the most recently started first), then the Tasks nobody has taken yet (dashed edge, no
 initials), then the ones still waiting, the longest waiting first. A tile's left edge and badge are in the marker's colour. Click a tile to open that breach's pane. It
 refreshes with the page, every minute, and straight after any change. `GET /api/markers/live` (optionally `?rocu=`; at most 100 tiles, with the true total).
-(optionally `?rocu=`; at most 100 tiles, with the true total).
 
 **Task review (past and present).** The **Review all tasks** button in the banner opens a pop-up with every task and marker ever put on a breach, live
 and finished, for the region chosen in the header (a menu in the pop-up switches region, or shows All UK, without changing your saved region). It is a table:
@@ -212,13 +225,13 @@ breach (with gang and sector), marker, who, status (Waiting, In progress, Comple
 completion; for a live one, how long so far). **Select a row** (or press Enter on its chevron) and it opens out in place with the place, the full dates, who it was allocated
 to and by whom, how long it waited before starting, how long it was worked on, who last changed it, and two buttons: **Open breach details** (the pane opens over the pop-up) and
 **Flag or allocate** (the dialog opens over it; the table refreshes behind it when you change something, and rows stay open). Above the table, count chips
-(All, Live, Unallocated, Waiting, In progress, Completed) filter it and show the numbers, a line gives the average time to start and to finish across the finished tasks, a search box
+(All, Live, Unallocated, Waiting 3+ days, Waiting, In progress, Completed) filter it and show the numbers, a line gives the average time to start and to finish across the finished tasks, a search box
 finds breaches, gangs, sectors, initials, marker names and the person who set them (every word must match), and a Marker menu narrows it to the Task or one custom marker.
 Click a column heading to sort (again to reverse; a date that has not happened yet always sorts last); the default puts what needs attention first: in progress, then
 waiting (longest first), then finished (latest first). Fifty rows load at a time, with a button for more. A breach that has left the feed keeps its history (listed under All UK)
 but has no pane to open. On a phone the pop-up fills the screen, the table becomes stacked cards and a Sort by menu replaces the headings. The banner stays on the Overview, even
 when nothing is live, once any task has been made, so the review is always reachable. Everyone signed in can use it. `GET /api/markers/history`
-(`?rocu=`, `?status=` all, live, waiting, started or completed, `?type_id=`, `?q=`, `?sort=` status, title, marker, who, allocated, started, completed or took, `?dir=`, `?offset=`, `?limit=`).
+(`?rocu=`, `?status=` all, live, unallocated, stale, waiting, started or completed; `stale` is a task still waiting to be started after 3 days (a `stale` flag is on every row, a `stale` count with the others), `?type_id=`, `?q=`, `?sort=` status, title, marker, who, allocated, started, completed or took, `?dir=`, `?offset=`, `?limit=`).
 
 **In the lists.** Every live marker is a badge on its breach in the national list, the regional list and the UK Victims table: the Task as a
 crown badge with the initials, a custom marker with its name (long names are shortened, the full wording is in the tooltip) and the
@@ -429,6 +442,18 @@ The first time a user signs in (after choosing their own password) they are take
 Skipping at any step leaves the remaining choices unchanged but keeps anything already chosen (for example the look). The tour
 is shown once per user (`users.onboarded_at`) and can be shown again from the Account button ("Show the welcome tour"). Finishing
 or skipping is written to the activity log. Without a database it is remembered for the session only.
+
+## Keyboard, accessibility and speed
+- **Keys:** **/** goes to the search box of the current tab (or the top-bar search), **Ctrl+K** (or Cmd+K) to the top-bar search from anywhere (with a breach pane open it closes the pane first, because the page behind a pane cannot be used),
+  **n** opens Add a breach, **j** / **k** step through the list a pane was opened from, **?** lists them all, and **Esc** closes the top-most dialog. Keys are ignored while you type in a box.
+- **Dialogs behave like dialogs.** While one is open the page behind it is inert (it cannot be tabbed to, clicked or read by a screen reader, and it does not scroll, with no sideways jump when the scrollbar goes), Tab goes round inside the dialog,
+  and when it closes the focus goes back to the button that opened it. A dialog opened over another (a flag dialog over the pane over the Task review) works the same way, one layer at a time.
+- **Page titles.** The browser tab names where you are ("Settings · EvilEye") and, with a breach pane open, which breach.
+- **Dates** are day month year with a 24-hour clock whatever language the browser is set to ("25 Nov 2026, 17:14"); flags and tasks, which only need a day, show the date alone.
+- **Checked automatically.** Every page, in both themes and on a phone, and every dialog, is scanned with axe-core and nothing at all is reported: every box has a label, colours meet 4.5:1 for text (3:1 for the link against its surrounding text, which is why links in text are underlined),
+  tables and lists are marked up as such, and headings run in order.
+- **Speed.** The page asks for each thing once when it opens (the same request made twice at the same moment is shared), the logos are small PNGs (kept for an hour), and the stylesheet and scripts are given an address that changes with their content (`?v=<hash>` is added when the page is served),
+  so a browser keeps them for a year (`Cache-Control: public, max-age=31536000, immutable`) and fetches new ones as soon as they change. The page itself, the sign-in page and the API are never cached.
 
 ## Look and feel
 The default theme is a slightly lightened dark. The contrast button in the header (and on the sign-in page) inverts it to a
