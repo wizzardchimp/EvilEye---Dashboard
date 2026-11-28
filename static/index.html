@@ -12,7 +12,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="EvilEye">
   <script src="/static/theme-init.js?v=1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=111">
+  <link rel="stylesheet" href="/static/style.css?v=114">
 </head>
 <body>
   <header class="topbar">
@@ -344,6 +344,12 @@
     SecurityWeek · Dark Reading · BleepingComputer · Krebs on Security.
     Refreshes when you open the page or press Refresh. For research purposes only.
   </footer>
+  <aside id="syncpop" class="syncpop" aria-label="Data check" hidden>
+    <span id="sp-ic" class="sp-ic" aria-hidden="true"></span>
+    <div class="sp-txt"><strong id="sp-title"></strong><span id="sp-sub"></span></div>
+    <button type="button" id="sp-x" class="sp-x" aria-label="Hide this message">&times;</button>
+  </aside>
+  <div id="sp-live" class="sr-only" role="status" aria-live="polite"></div>
 
   <div id="modal" class="modal" hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">

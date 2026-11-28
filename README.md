@@ -5,6 +5,13 @@ Private ransomware-intel dashboard for the UK, broken down by ROCU (regional org
 **Refresh policy:** no background scanning. The server fetches external feeds only when a signed-in user opens the
 dashboard (and the stored data is older than `STALE_MINUTES`), or when Refresh is pressed.
 
+**While it checks.** The page shows what was stored straight away, and a small card appears at the foot of the screen: **Checking for new data** ("Looking for new breaches, news
+and alerts. The page updates by itself when it is done."). It never blocks anything (the page behind it stays usable; under a dialog it is simply part of the page behind it). When
+the check ends the lists, counts and tickers update by themselves and the card says **Data is up to date** for a few seconds, then goes. It also appears when you open the page while
+someone else's check is running, and when you press Refresh. If the check goes past 45 seconds it says **Still checking** (taking longer than usual); if the main feed does not answer
+it says **Could not check for new data**, that this is the last data we have and how old it is, and stays for 20 seconds. The × (or Esc) hides it for that check; a screen reader is told each
+step either way. While new breaches are still being placed into regions after the check, the "up to date" note says so. The header's status text ("refreshing…", "synced 5 min ago") is unchanged.
+
 ## Data sources
 - **UK victims, gangs:** ransomware.live, RansomLook, deepdarkCTI.
 - **Alerts:** NCSC, CISA KEV, Have I Been Pwned, SANS ISC, RansomLook / ransomware.live press.

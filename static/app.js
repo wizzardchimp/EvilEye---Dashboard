@@ -2051,7 +2051,7 @@ const gsFocus = () => { if (window.scrollY > 0) window.scrollTo(0, 0); gs.input.
 
 // keyboard: "/" jumps to the search box of the current tab (or the top-bar search), Ctrl/Cmd+K to the top-bar search from anywhere, Esc closes dialogs
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { if (!helpdlg.hidden) closeHelp(); else if (!abdlg.hidden) closeBreachForm(); else if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!trdlg.hidden) closeTr(); else if (!modal.hidden) closeModal(); return; }
+  if (e.key === "Escape") { if (!helpdlg.hidden) closeHelp(); else if (!abdlg.hidden) closeBreachForm(); else if (!$("#fdlg").hidden) closeFlag(); else if (!drawer.hidden) closeDrawer(); else if (!trdlg.hidden) closeTr(); else if (!modal.hidden) closeModal(); else if (!syncpop.hidden) { spDismissed = true; syncHide(); } return; }
   if (!obEl.hidden) return;
   if ((e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) { e.preventDefault(); if (leavePane()) gsFocus(); return; }
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
@@ -2098,10 +2098,65 @@ document.addEventListener("keydown", (e) => {
 // home: the EvilEye text goes back to the Overview
 $("#home").addEventListener("click", (e) => { e.preventDefault(); showTab("overview", true); window.scrollTo({ top: 0, behavior: "smooth" }); });
 
+// ------------------------------------------------------------------ the "checking for new data" pop-up
+// A small card at the foot of the page while the server checks the feeds (a page open that found the data stale, or Refresh). It never blocks anything:
+// what is already on the screen can be used meanwhile, and it updates by itself when the check ends. Then the card says how it went and goes away.
+const syncpop = $("#syncpop");
+const spSvg = (inner) => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+const SP_ICON = {
+  checking: spSvg('<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>'),
+  done: spSvg('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'),
+  failed: spSvg('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
+};
+let spDismissed = false, spTimer = 0, spRun = 0;
+const SP_SLOW_MS = 45000;                                      // after this the card says it is taking longer than usual
+function syncShow(state, title, sub) {
+  clearTimeout(spTimer);
+  $("#sp-live").textContent = `${title}. ${sub}`;                // a screen reader hears it whether or not the card is on show
+  if (spDismissed) return;
+  syncpop.className = `syncpop ${state}`;
+  $("#sp-ic").innerHTML = SP_ICON[state === "slow" ? "checking" : state];
+  $("#sp-title").textContent = title; $("#sp-sub").textContent = sub;
+  syncpop.inert = document.body.classList.contains("modal-open");          // under a dialog it is part of the page behind it
+  syncpop.hidden = false; document.body.classList.add("has-sync");
+}
+new ResizeObserver(() => { if (!syncpop.hidden) document.documentElement.style.setProperty("--sp-top", `${syncpop.offsetHeight + parseFloat(getComputedStyle(syncpop).bottom)}px`); }).observe(syncpop);          // how far up a message must sit to clear the card, whatever its height
+function syncHide() { clearTimeout(spTimer); syncpop.hidden = true; document.body.classList.remove("has-sync"); }
+function syncHideLater(ms) {                                                  // never while the pointer or the keyboard is on the card
+  clearTimeout(spTimer);
+  spTimer = setTimeout(() => { if (syncpop.matches(":hover, :focus-within")) syncHideLater(2000); else syncHide(); }, ms);
+}
+let spBack = null;                                                         // what had the focus before it went to the card
+syncpop.addEventListener("focusin", (e) => { if (e.relatedTarget && !syncpop.contains(e.relatedTarget)) spBack = e.relatedTarget; });
+$("#sp-x").addEventListener("click", () => {
+  const back = spBack; spDismissed = true; syncHide();
+  if (back && document.contains(back) && !back.closest("[inert]")) back.focus({ preventScroll: true });          // the focus does not drop to the top of the page
+});
+function syncFinish(h) {
+  const last = h.last_refresh && h.last_refresh.rl_victims_gb;
+  if (!("last_refresh" in h)) syncShow("failed", "Could not check for new data", "The dashboard could not be reached, so this is the last data it loaded. It will try again when you press Refresh.");
+  else if (h.errors && h.errors.rl_victims_gb) syncShow("failed", "Could not check for new data", `The data sources did not answer, so this is the last data we have${last ? ` (synced ${ago(last)})` : ""}. Try Refresh again in a few minutes.`);
+  else { syncShow("done", "Data is up to date", `Checked just now.${h.placing ? " New breaches are still being placed into regions." : ""}`); syncHideLater(4500); return; }
+  syncHideLater(20000);
+}
+
 // ------------------------------------------------------------------ refresh policy
 // External feeds are fetched by the server only when the page is opened (if stale) or Refresh is pressed.
 async function waitForRefresh() {
-  for (let i = 0; i < 40; i++) { const h = await loadHealth(); if (!h.refreshing) return; await new Promise((res) => setTimeout(res, 3000)); }
+  const run = ++spRun, t0 = Date.now(); let slow = false, h = {};
+  spDismissed = false;
+  syncShow("checking", "Checking for new data", "Looking for new breaches, news and alerts. The page updates by itself when it is done.");
+  for (let i = 0; i < 100; i++) {                                  // every 3 seconds for the first two minutes, then every 10: about ten minutes at the most
+    h = await loadHealth();
+    if (!("last_refresh" in h) || !h.refreshing) break;
+    if (!slow && Date.now() - t0 > SP_SLOW_MS && run === spRun) { slow = true; syncShow("slow", "Still checking", "This is taking longer than usual. You can keep working: the page updates by itself when the check finishes."); }
+    await new Promise((res) => setTimeout(res, Date.now() - t0 < 120000 ? 3000 : 10000));
+  }
+  if (run === spRun) {                                              // (a newer check, started meanwhile, owns the card)
+    if (h.refreshing) { syncShow("slow", "Still checking", "This is taking much longer than usual. Reload the page in a few minutes to see the new data."); syncHideLater(20000); }          // we gave up waiting: never say "up to date" then
+    else syncFinish(h);
+  }
+  return h;
 }
 // Region lookups run on the server after an open or Refresh. While that one job runs we re-read the screen every
 // 20s, then stop. No polling otherwise.
@@ -2135,13 +2190,13 @@ const layerEl = (id) => document.getElementById(id);
 const layerOf = (el) => (el ? LAYER_IDS.find((id) => layerEl(id) && layerEl(id).contains(el)) : undefined);
 let lastOutside = null, wasOpen = [];
 const openers = {}, lastInside = {};
-document.addEventListener("focusin", (e) => { const id = layerOf(e.target); if (id) lastInside[id] = e.target; else if (!e.target.closest("#toast, #drawer-backdrop")) lastOutside = e.target; });
+document.addEventListener("focusin", (e) => { const id = layerOf(e.target); if (id) lastInside[id] = e.target; else if (!e.target.closest("#toast, #drawer-backdrop, #syncpop")) lastOutside = e.target; });
 function firstFocusable(el) { return [...el.querySelectorAll('input:not([type=hidden]), select, textarea, button, [href], [tabindex="0"]')].find((x) => !x.disabled && !x.closest("[hidden]") && x.getClientRects().length); }
 function syncLayers() {
   const open = LAYER_IDS.filter((id) => layerEl(id) && !layerEl(id).hidden), top = open[0];
   LAYER_IDS.forEach((id) => { const el = layerEl(id); if (el) el.inert = !!top && id !== top; });
   const bd = $("#drawer-backdrop"); if (bd) bd.inert = top !== "drawer";
-  document.querySelectorAll(".topbar, .navrow, .filterbar, main, .foot").forEach((el) => { el.inert = open.length > 0; });
+  document.querySelectorAll(".topbar, .navrow, .filterbar, main, .foot, #syncpop").forEach((el) => { el.inert = open.length > 0; });
   document.body.classList.toggle("modal-open", open.length > 0);
   const before = wasOpen[0];
   for (const id of open) if (!wasOpen.includes(id)) {
